@@ -47,6 +47,35 @@ class DynamicsResult:
     v: np.ndarray
 
 
+@dataclass(frozen=True)
+class ResultDiagnostics:
+    """Small summary for checking whether a mechanism result is plausible."""
+
+    coordinates: int
+    constraints: int
+    steps: int
+    t_start: float
+    t_end: float
+    max_constraint_residual: float
+    finite: bool
+
+    @property
+    def degrees_of_freedom(self) -> int:
+        return self.coordinates - self.constraints
+
+    def as_dict(self) -> dict[str, float | int | bool]:
+        return {
+            "coordinates": self.coordinates,
+            "constraints": self.constraints,
+            "degrees_of_freedom": self.degrees_of_freedom,
+            "steps": self.steps,
+            "t_start": self.t_start,
+            "t_end": self.t_end,
+            "max_constraint_residual": self.max_constraint_residual,
+            "finite": self.finite,
+        }
+
+
 class Mechanism:
     """Factory namespace for supported mechanism formulations."""
 
@@ -287,19 +316,54 @@ class PlanarMechanism:
             _as_finite_scalar(t, "t"),
         )
 
+    def constraint_residuals(self, result: KinematicResult | DynamicsResult) -> np.ndarray:
+        """Return constraint residuals for every result step.
+
+        The returned array has shape ``(n_constraints, n_steps)`` so each
+        column is ``C(q[:, i], t[i])``.
+        """
+        self._validate_result(result)
+        residuals = np.zeros((self.model.nrestr, len(result.t)))
+        for i, ti in enumerate(result.t):
+            residuals[:, i] = self.constraint_residual(result.q[:, i], float(ti))
+        return residuals
+
     def max_constraint_residual(self, result: KinematicResult | DynamicsResult) -> float:
         """Return the maximum infinity-norm constraint residual over a result."""
-        if result.q.shape[0] != self.model.ncoord:
-            raise ValueError(
-                f"result.q must have {self.model.ncoord} rows, got {result.q.shape[0]}"
+        residuals = self.constraint_residuals(result)
+        if residuals.size == 0:
+            return 0.0
+        return float(np.max(np.abs(residuals)))
+
+    def assert_constraints_satisfied(
+        self,
+        result: KinematicResult | DynamicsResult,
+        tol: float = 1e-8,
+    ) -> None:
+        """Raise ``MechanismSolveError`` when a result violates constraints."""
+        from ..errors import MechanismSolveError
+
+        tol = _as_finite_scalar(tol, "tol")
+        if tol <= 0.0:
+            raise ValueError("tol must be positive")
+        max_residual = self.max_constraint_residual(result)
+        if max_residual > tol:
+            raise MechanismSolveError(
+                f"Constraint residual {max_residual:.3e} exceeds tolerance {tol:.3e}."
             )
-        if result.q.shape[1] != len(result.t):
-            raise ValueError("result.q columns must match result.t length")
-        residuals = [
-            np.linalg.norm(self.constraint_residual(result.q[:, i], float(ti)), ord=np.inf)
-            for i, ti in enumerate(result.t)
-        ]
-        return float(np.max(residuals)) if residuals else 0.0
+
+    def diagnostics(self, result: KinematicResult | DynamicsResult) -> ResultDiagnostics:
+        """Return a compact diagnostic summary for a solved result."""
+        self._validate_result(result)
+        return ResultDiagnostics(
+            coordinates=self.model.ncoord,
+            constraints=self.model.nrestr,
+            steps=len(result.t),
+            t_start=float(result.t[0]),
+            t_end=float(result.t[-1]),
+            max_constraint_residual=self.max_constraint_residual(result),
+            finite=bool(np.all(np.isfinite(result.t)) and np.all(np.isfinite(result.q))),
+        )
 
     def solve_kinematics(
         self,
@@ -349,6 +413,20 @@ class PlanarMechanism:
         if idx < 0 or idx >= len(self.model.bodies):
             raise IndexError(f"body index {idx} is out of range")
         return idx
+
+    def _validate_result(self, result: KinematicResult | DynamicsResult) -> None:
+        t = np.asarray(result.t, dtype=float)
+        q = np.asarray(result.q, dtype=float)
+        if t.ndim != 1 or len(t) == 0:
+            raise ValueError("result.t must be a non-empty 1D array")
+        if q.shape != (self.model.ncoord, len(t)):
+            raise ValueError(
+                f"result.q must have shape ({self.model.ncoord}, {len(t)}), got {q.shape}"
+            )
+        if not np.all(np.isfinite(t)):
+            raise ValueError("result.t must contain only finite values")
+        if not np.all(np.isfinite(q)):
+            raise ValueError("result.q must contain only finite values")
 
 
 def _as_vector(value: ArrayLike2, name: str, length: int) -> np.ndarray:

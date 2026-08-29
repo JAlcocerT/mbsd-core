@@ -1,7 +1,14 @@
 """Planar mechanism modeling and simulation."""
 
 from ..errors import MechanismSolveError
-from .builder import BodyHandle, DynamicsResult, KinematicResult, Mechanism, PlanarMechanism
+from .builder import (
+    BodyHandle,
+    DynamicsResult,
+    KinematicResult,
+    Mechanism,
+    PlanarMechanism,
+    ResultDiagnostics,
+)
 from .forces import Spring
 
 __all__ = [
@@ -11,5 +18,6 @@ __all__ = [
     "Mechanism",
     "MechanismSolveError",
     "PlanarMechanism",
+    "ResultDiagnostics",
     "Spring",
 ]

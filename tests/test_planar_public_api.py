@@ -40,6 +40,18 @@ def test_driven_slider_tracks_prescribed_x_motion():
     np.testing.assert_allclose(result.q[4, :], 0.0, atol=1e-9)
     np.testing.assert_allclose(result.q[5, :], 0.0, atol=1e-9)
     assert mechanism.max_constraint_residual(result) < 1e-9
+    mechanism.assert_constraints_satisfied(result, tol=1e-9)
+
+    residuals = mechanism.constraint_residuals(result)
+    diagnostics = mechanism.diagnostics(result)
+
+    assert residuals.shape == (mechanism.nrestr, len(t))
+    assert diagnostics.coordinates == mechanism.ncoord
+    assert diagnostics.constraints == mechanism.nrestr
+    assert diagnostics.steps == len(t)
+    assert diagnostics.finite
+    assert diagnostics.max_constraint_residual < 1e-9
+    assert diagnostics.as_dict()["degrees_of_freedom"] == 0
 
 
 def test_mass_spring_dynamics_runs_from_public_api():
@@ -144,6 +156,42 @@ def test_bad_inputs_raise_clear_errors():
 
     with pytest.raises(ValueError, match="shape"):
         mechanism.simulate(np.array([0.0, 0.1]), q0=np.zeros(mechanism.ncoord + 1))
+
+
+def test_constraint_assertion_reports_bad_result():
+    mechanism = Mechanism.planar(gravity=(0.0, 0.0))
+    ground = mechanism.ground()
+    slider = mechanism.body("slider")
+    mechanism.slider(ground, slider, axis=(1.0, 0.0))
+    mechanism.coordinate_drive(
+        slider,
+        "x",
+        value=lambda t: t,
+        velocity=lambda _t: 1.0,
+        acceleration=lambda _t: 0.0,
+    )
+
+    result = mechanism.solve_kinematics(np.linspace(0.0, 0.2, 5))
+    bad_q = result.q.copy()
+    bad_q[4, 2] = 1.0
+    bad = type(result)(t=result.t, q=bad_q, v=result.v, a=result.a)
+
+    with pytest.raises(MechanismSolveError, match="exceeds tolerance"):
+        mechanism.assert_constraints_satisfied(bad)
+
+    with pytest.raises(ValueError, match="tol must be positive"):
+        mechanism.assert_constraints_satisfied(result, tol=0.0)
+
+
+def test_diagnostics_rejects_mismatched_result_shape():
+    mechanism = Mechanism.planar()
+    mechanism.ground()
+    bad = type("BadResult", (), {})()
+    bad.t = np.array([0.0, 0.1])
+    bad.q = np.zeros((mechanism.ncoord + 1, 2))
+
+    with pytest.raises(ValueError, match="result.q must have shape"):
+        mechanism.diagnostics(bad)
 
 
 def test_slider_axis_is_normalized():

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0 - Week 2 Validation
+
+Prepared release candidate.
+
+- Add result-wide constraint residual helpers.
+- Add `PlanarMechanism.assert_constraints_satisfied()` for explicit validation
+  failures.
+- Add `PlanarMechanism.diagnostics()` and `ResultDiagnostics` for compact
+  simulation summaries.
+- Add tests for diagnostics, residual shapes, and failed constraint assertions.
+- Preserve the small top-level API: `Mechanism`, `Spring`, and
+  `MechanismSolveError`.
+- Keep core runtime dependencies limited to NumPy and SciPy.
+
 ## v0.1.0 - Week 1 Core
 
 Initial public core release candidate.

@@ -51,6 +51,8 @@ m.coordinate_drive(
 )
 
 result = m.solve_kinematics(np.linspace(0.0, 1.0, 101))
+m.assert_constraints_satisfied(result)
+print(m.diagnostics(result).as_dict())
 print(result.q[3, -1])  # slider x at final time
 ```
 
@@ -64,7 +66,8 @@ print(result.q[3, -1])  # slider x at final time
 - Position, velocity, and acceleration solves.
 - Constrained dynamics with Lagrange multipliers.
 - Gravity, springs, and damping helpers.
-- Constraint residual helpers for validating solved trajectories.
+- Constraint residual, assertion, and diagnostics helpers for validating solved
+  trajectories.
 
 ## Examples
 
