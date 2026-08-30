@@ -7,8 +7,8 @@ students, and researchers who want to script mechanisms directly in Python:
 declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
-The first public API is intentionally focused on **2D planar mechanisms**.
-Broader plotting, synthesis, CAD/export, gallery, browser-demo, and 3D work
+The public API is intentionally focused on **2D planar mechanisms**. Plotting,
+CAD/export, gallery, browser-demo, larger synthesis workflows, and 3D work
 will be released separately after the core API is stable.
 
 ## Install
@@ -52,6 +52,7 @@ m.coordinate_drive(
 
 result = m.solve_kinematics(np.linspace(0.0, 1.0, 101))
 m.assert_constraints_satisfied(result)
+print(m.model_diagnostics(result.q[:, 0]).as_dict())
 print(m.diagnostics(result).as_dict())
 print(result.q[3, -1])  # slider x at final time
 ```
@@ -68,6 +69,12 @@ print(result.q[3, -1])  # slider x at final time
 - Gravity, springs, and damping helpers.
 - Constraint residual, assertion, and diagnostics helpers for validating solved
   trajectories.
+- Static model diagnostics with Jacobian rank, rank-based DOF, and nominal DOF.
+- Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
+
+Forward dynamics currently requires each body reference point to coincide with
+its center of mass. Offset-COM kinematics are accepted, but offset-COM dynamics
+raise a clear error until the corresponding inertial terms are implemented.
 
 ## Examples
 
@@ -121,8 +128,8 @@ only the public package surface under:
 src/mbsd/
 ```
 
-Plotting, synthesis, CAD/export, browser demos, gallery assets, and 3D
-mechanisms are intentionally outside this first core release.
+Plotting, CAD/export, browser demos, gallery assets, larger synthesis
+workflows, and 3D mechanisms are intentionally outside this core repository.
 
 Longer-form docs, release planning, and website content live outside this core
 package repository.

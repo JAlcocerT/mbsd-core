@@ -56,29 +56,30 @@ def dt_jac_prism(joint, qi, qj, vi, vj):
     dtheta_j = vj[2]
 
     diff = Ri + Ai @ joint.ri - Rj - Aj @ joint.rj
-    Ai_hi = Ai @ joint.hi
-    Atet_hi = Atet_i @ joint.hi
+    n = Ai @ joint.hi
+    n_theta = Atet_i @ joint.hi
+    ri_theta = Atet_i @ joint.ri
+    rj_theta = Atet_j @ joint.rj
+    n_dot = dtheta_i * n_theta
+    diff_dot = Vi + dtheta_i * ri_theta - Vj - dtheta_j * rj_theta
 
     # Row 0: d/dt of [0,0,1,0,0,-1] = all zeros
-    # Row 1:
-    DCq[1, 0:2] = dtheta_i * Atet_hi
-    DCq[1, 3:5] = -dtheta_i * Atet_hi
+    # Row 1 is the time derivative of jac_prism()'s perpendicular-distance row.
+    DCq[1, 0:2] = n_dot
+    DCq[1, 3:5] = -n_dot
 
-    # Column 2 (theta_i): complex expression from DtJac_prism_2D.m line 27
+    # d/dt of (dAi*hi)^T*diff + (Ai*hi)^T*(dAi*ri)
     DCq[1, 2] = (
-        Atet_hi @ Vi
-        + ((-Ai_hi) @ diff
-           + 2.0 * Atet_hi @ (Atet_i @ joint.ri)
-           + Ai_hi @ (-Ai @ joint.ri)) * dtheta_i
-        + (-Atet_hi) @ Vj
-        + (Atet_hi @ (-Atet_j @ joint.rj)
-           + Ai_hi @ (Aj @ joint.rj)) * dtheta_j
+        dtheta_i * (-n) @ diff
+        + n_theta @ diff_dot
+        + n_dot @ ri_theta
+        + n @ (dtheta_i * (-Ai @ joint.ri))
     )
 
-    # Column 5 (theta_j)
+    # d/dt of -(Ai*hi)^T*(dAj*rj)
     DCq[1, 5] = (
-        Atet_hi @ (-Atet_j @ joint.rj) * dtheta_i
-        + Ai_hi @ (Aj @ joint.rj) * dtheta_j
+        -(n_dot @ rj_theta)
+        - n @ (dtheta_j * (-Aj @ joint.rj))
     )
 
     return DCq
@@ -124,6 +125,8 @@ def dt_jacobian(mbody, q, v, t):
         DCq[row:row + 2, cj:cj + 3] = DCqp[:, 3:6]
         row += 2
 
+    row += 3 * mbody.nl + mbody.npl + mbody.ng
+
     # User constraints
     for uc in mbody.user_constraints:
         DCqUs = uc.dt_jacobian_fn(mbody, q, v, t)
@@ -145,7 +148,7 @@ def dt_constraints(mbody, q, t):
     """
     Ct = np.zeros(mbody.nrestr)
 
-    row = 3 + 2 * mbody.nr + 2 * mbody.np_
+    row = _user_constraint_start_row(mbody)
 
     for uc in mbody.user_constraints:
         ct_u = uc.dt_constraint_fn(mbody, q, t)
@@ -163,7 +166,7 @@ def dtdt_constraints(mbody, q, v, t):
     """
     DCt = np.zeros(mbody.nrestr)
 
-    row = 3 + 2 * mbody.nr + 2 * mbody.np_
+    row = _user_constraint_start_row(mbody)
 
     for uc in mbody.user_constraints:
         dct_u = uc.dtdt_constraint_fn(mbody, q, v, t)
@@ -172,3 +175,7 @@ def dtdt_constraints(mbody, q, v, t):
         row += len(dct_u)
 
     return DCt
+
+
+def _user_constraint_start_row(mbody):
+    return 3 + 2 * mbody.nr + 2 * mbody.np_ + 3 * mbody.nl + mbody.npl + mbody.ng

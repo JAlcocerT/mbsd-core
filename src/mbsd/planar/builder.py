@@ -9,6 +9,8 @@ import numpy as np
 
 from .dynamics import extract_dynamics_solution, solve_dynamics_scipy
 from .constraints import constraints
+from .derivatives import dt_constraints
+from .jacobians import jacobian
 from .model import Body, MBody, PrismJoint, RevJoint, UserConstraint
 from .simulation import run_kinematic_simulation
 from .solver import solve_position, solve_velocity
@@ -73,6 +75,33 @@ class ResultDiagnostics:
             "t_end": self.t_end,
             "max_constraint_residual": self.max_constraint_residual,
             "finite": self.finite,
+        }
+
+
+@dataclass(frozen=True)
+class ModelDiagnostics:
+    """Static diagnostic summary for the current constraint system."""
+
+    coordinates: int
+    constraints: int
+    nominal_degrees_of_freedom: int
+    rank_degrees_of_freedom: int
+    jacobian_rank: int
+    singular: bool
+
+    @property
+    def degrees_of_freedom(self) -> int:
+        return self.rank_degrees_of_freedom
+
+    def as_dict(self) -> dict[str, int | bool]:
+        return {
+            "coordinates": self.coordinates,
+            "constraints": self.constraints,
+            "degrees_of_freedom": self.degrees_of_freedom,
+            "nominal_degrees_of_freedom": self.nominal_degrees_of_freedom,
+            "rank_degrees_of_freedom": self.rank_degrees_of_freedom,
+            "jacobian_rank": self.jacobian_rank,
+            "singular": self.singular,
         }
 
 
@@ -362,7 +391,23 @@ class PlanarMechanism:
             t_start=float(result.t[0]),
             t_end=float(result.t[-1]),
             max_constraint_residual=self.max_constraint_residual(result),
-            finite=bool(np.all(np.isfinite(result.t)) and np.all(np.isfinite(result.q))),
+            finite=_result_arrays_are_finite(result),
+        )
+
+    def model_diagnostics(self, q: np.ndarray | None = None, t: float = 0.0) -> ModelDiagnostics:
+        """Return coordinate, constraint, DOF, and Jacobian-rank diagnostics."""
+        if q is None:
+            q = np.zeros(self.model.ncoord)
+        q = _as_state(q, "q", self.model.ncoord)
+        Cq = jacobian(self.model, q, _as_finite_scalar(t, "t"))
+        rank = int(np.linalg.matrix_rank(Cq))
+        return ModelDiagnostics(
+            coordinates=self.model.ncoord,
+            constraints=self.model.nrestr,
+            nominal_degrees_of_freedom=self.model.ncoord - self.model.nrestr,
+            rank_degrees_of_freedom=self.model.ncoord - rank,
+            jacobian_rank=rank,
+            singular=rank < min(Cq.shape),
         )
 
     def solve_kinematics(
@@ -382,28 +427,52 @@ class PlanarMechanism:
         t: np.ndarray,
         q0: np.ndarray,
         v0: np.ndarray | None = None,
+        allow_underconstrained: bool = False,
+        velocity_tol: float = 1e-8,
         **kwargs,
     ) -> DynamicsResult:
         """Run forward dynamics with the scipy-based constrained integrator."""
+        from ..errors import MechanismSolveError
+
         t = _as_time_array(t)
+        velocity_tol = _as_finite_scalar(velocity_tol, "velocity_tol")
+        if velocity_tol <= 0.0:
+            raise ValueError("velocity_tol must be positive")
+        self._ensure_centroidal_dynamics()
         q0 = self.solve_position(
             _as_state(q0, "q0", self.model.ncoord),
             float(t[0]),
-            allow_underconstrained=True,
+            allow_underconstrained=allow_underconstrained,
         )
         if v0 is None:
             v0 = solve_velocity(
                 self.model,
                 q0,
                 float(t[0]),
-                allow_underconstrained=True,
+                allow_underconstrained=allow_underconstrained,
             )
         else:
             v0 = _as_state(v0, "v0", self.model.ncoord)
-        sol = solve_dynamics_scipy(self.model, q0, v0, t, **kwargs)
+            velocity_residual = jacobian(self.model, q0, float(t[0])) @ v0 + dt_constraints(
+                self.model,
+                q0,
+                float(t[0]),
+            )
+            if np.linalg.norm(velocity_residual, ord=np.inf) > velocity_tol:
+                raise MechanismSolveError(
+                    "Initial velocity violates velocity-level constraints: "
+                    f"{np.linalg.norm(velocity_residual, ord=np.inf):.3e} "
+                    f"> {velocity_tol:.3e}."
+                )
+        sol = solve_dynamics_scipy(
+            self.model,
+            q0,
+            v0,
+            t,
+            allow_underconstrained=allow_underconstrained,
+            **kwargs,
+        )
         if not sol.success:
-            from ..errors import MechanismSolveError
-
             raise MechanismSolveError(f"Dynamic integration failed: {sol.message}")
         q, v, t_out = extract_dynamics_solution(self.model, sol)
         return DynamicsResult(t=t_out, q=q, v=v)
@@ -423,10 +492,38 @@ class PlanarMechanism:
             raise ValueError(
                 f"result.q must have shape ({self.model.ncoord}, {len(t)}), got {q.shape}"
             )
+        if not hasattr(result, "v"):
+            raise ValueError("result.v is required")
+        v = np.asarray(result.v, dtype=float)
+        if v.shape != (self.model.ncoord, len(t)):
+            raise ValueError(
+                f"result.v must have shape ({self.model.ncoord}, {len(t)}), got {v.shape}"
+            )
+        if hasattr(result, "a"):
+            a = np.asarray(result.a, dtype=float)
+            if a.shape != (self.model.ncoord, len(t)):
+                raise ValueError(
+                    f"result.a must have shape ({self.model.ncoord}, {len(t)}), got {a.shape}"
+                )
         if not np.all(np.isfinite(t)):
             raise ValueError("result.t must contain only finite values")
         if not np.all(np.isfinite(q)):
             raise ValueError("result.q must contain only finite values")
+        if not np.all(np.isfinite(v)):
+            raise ValueError("result.v must contain only finite values")
+        if hasattr(result, "a") and not np.all(np.isfinite(result.a)):
+            raise ValueError("result.a must contain only finite values")
+
+    def _ensure_centroidal_dynamics(self) -> None:
+        from ..errors import MechanismSolveError
+
+        for index, body in enumerate(self.model.bodies):
+            if np.linalg.norm(body.rG, ord=np.inf) > 0.0:
+                raise MechanismSolveError(
+                    "Dynamics currently requires each body reference point to "
+                    "coincide with its center of mass. "
+                    f"Body {index} ({body.name!r}) has center_of_mass={body.rG}."
+                )
 
 
 def _as_vector(value: ArrayLike2, name: str, length: int) -> np.ndarray:
@@ -456,6 +553,13 @@ def _as_time_array(value: np.ndarray) -> np.ndarray:
     if len(arr) > 1 and not np.all(np.diff(arr) > 0.0):
         raise ValueError("t must be strictly increasing")
     return arr
+
+
+def _result_arrays_are_finite(result: KinematicResult | DynamicsResult) -> bool:
+    arrays = [result.t, result.q, result.v]
+    if hasattr(result, "a"):
+        arrays.append(result.a)
+    return bool(all(np.all(np.isfinite(array)) for array in arrays))
 
 
 def _as_finite_scalar(value: float, name: str) -> float:

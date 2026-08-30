@@ -26,7 +26,13 @@ def main() -> None:
     v0 = np.zeros(mechanism.ncoord)
     t = np.linspace(0.0, 1.0, 101)
 
-    result = mechanism.simulate(t, q0=q0, v0=v0, springs=[spring])
+    result = mechanism.simulate(
+        t,
+        q0=q0,
+        v0=v0,
+        springs=[spring],
+        allow_underconstrained=True,
+    )
 
     x = result.q[3, :]
     print("Mass-spring-damper")

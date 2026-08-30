@@ -1,6 +1,6 @@
 [project]
 name = "mbsd"
-version = "0.2.0"
+version = "0.3.0"
 description = "Readable Python tools for planar multibody mechanism kinematics and dynamics."
 readme = "readme.md"
 requires-python = ">=3.10"
@@ -39,7 +39,6 @@ plot = [
 dev = [
     "pytest>=8.0,<9.0",
     "ruff>=0.8,<1.0",
-    "mypy>=1.13,<2.0",
 ]
 
 [project.urls]

@@ -299,7 +299,8 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
                          method='RK45', omega=0, alpha=0,
                          rtol=1e-9, atol=1e-11, project_position=False,
                          contacts=None, surface_contacts=None,
-                         alpha_baumgarte=0.0, beta_baumgarte=0.0):
+                         alpha_baumgarte=0.0, beta_baumgarte=0.0,
+                         allow_underconstrained=False):
     """Solve dynamics using scipy.integrate.solve_ivp.
 
     Integrates the constrained dynamics equations:
@@ -329,6 +330,8 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
             C̈ + 2αĊ + β²C = 0 (critically damped at frequency β when α = β).
             Default 0 = stock behavior. See `validation/baumgarte_comparison.md`
             for tuning guidance and side-by-side drift comparison.
+        allow_underconstrained: allow position projection to use the same
+            minimum-norm underconstrained solve permitted by the public facade.
 
     Returns:
         sol: scipy OdeResult object with attributes t, y (solution at times)
@@ -353,7 +356,12 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
         # manifold to leading order. Re-solving position here can inject
         # spurious energy into the system.
         if project_position:
-            q = solve_position(mbody, q, t, allow_underconstrained=True)
+            q = solve_position(
+                mbody,
+                q,
+                t,
+                allow_underconstrained=allow_underconstrained,
+            )
 
         # Compute user forces
         Q_user = None

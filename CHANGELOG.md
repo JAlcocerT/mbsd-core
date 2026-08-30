@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.3.0 - Week 3 Synthesis Preview
+
+Prepared release candidate.
+
+- Add `mbsd.planar.synthesis` with a small four-bar synthesis preview.
+- Add `FourBar` and `FourBarPose` helpers for pure-geometry assembly.
+- Add Grashof classification, rocker-angle sweeps, and affine fitting helpers.
+- Add closed-form Freudenstein three-precision-point function synthesis.
+- Add explicit underconstrained-dynamics opt-in to `simulate()`.
+- Reject offset center-of-mass dynamics until the missing inertial terms are
+  implemented.
+- Add static model diagnostics with Jacobian rank and singularity status.
+- Report both nominal and rank-based model degrees of freedom.
+- Fix user-constraint derivative row alignment after lower-level constraint
+  types.
+- Fix offset prismatic-joint Jacobian time derivatives used by acceleration
+  solves.
+- Validate velocity and acceleration arrays in result diagnostics.
+- Remove `mypy` from dev dependencies until type checking is wired into CI.
+- Add tests for synthesis recovery, offset-slider acceleration derivatives,
+  invalid geometry, and affine-fit behavior.
+- Keep top-level `mbsd` exports unchanged.
+
 ## v0.2.0 - Week 2 Validation
 
 Prepared release candidate.
