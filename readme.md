@@ -83,6 +83,7 @@ m.result_to_csv(result, "trajectory.csv")
 - Experimental `mbsd.spatial` vocabulary on the local `v0.5.0-dev` branch.
 - Per-configuration solver diagnostics on the local `v0.6.0-dev` branch.
 - Experimental 3D point kinematics on the local `v0.7.0-dev` branch.
+- Limited experimental 3D free-body dynamics on the local `v0.8.0-dev` branch.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with

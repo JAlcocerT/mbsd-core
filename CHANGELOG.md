@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.8.0-dev - 3D Dynamics Preview
+
+Local development branch only.
+
+- Add experimental `SpatialState`.
+- Add a limited unconstrained free-body stepper and sampled simulation helper.
+- Keep this preview explicitly separate from full constrained 3D multibody
+  dynamics.
+
 ## v0.7.0-dev - 3D Kinematics Preview
 
 Local development branch only.

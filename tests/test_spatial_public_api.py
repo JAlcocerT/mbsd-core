@@ -7,10 +7,13 @@ from mbsd.spatial import (
     Quaternion,
     SpatialBody,
     SpatialModel,
+    SpatialState,
     SphericalJoint3D,
     max_spatial_residual,
     point_position,
+    simulate_free_body,
     spherical_joint_residual,
+    step_free_body,
 )
 
 
@@ -76,3 +79,47 @@ def test_spherical_joint_reports_residual_and_metadata():
     np.testing.assert_allclose(joint.residual(poses), [0.0, 0.0, 0.0])
     assert max_spatial_residual([joint.residual(poses)]) == 0.0
     assert joint.as_dict()["kind"] == "spherical"
+
+
+def test_spatial_free_body_step_advances_state():
+    state = SpatialState(
+        pose=Pose3D.identity(),
+        linear_velocity=np.array([1.0, 0.0, 0.0]),
+        angular_velocity=np.array([0.0, 0.0, 0.0]),
+    )
+
+    next_state = step_free_body(
+        state,
+        force=np.array([2.0, 0.0, 0.0]),
+        torque=np.zeros(3),
+        mass=2.0,
+        inertia=np.ones(3),
+        dt=0.5,
+    )
+
+    np.testing.assert_allclose(next_state.linear_velocity, [1.5, 0.0, 0.0])
+    np.testing.assert_allclose(next_state.pose.translation, [0.75, 0.0, 0.0])
+    assert next_state.pose.rotation.as_dict()["w"] == 1.0
+
+
+def test_spatial_free_body_simulation_validates_time():
+    state = SpatialState(Pose3D.identity(), np.zeros(3), np.zeros(3))
+    history = simulate_free_body(
+        state,
+        force=np.zeros(3),
+        torque=np.zeros(3),
+        mass=1.0,
+        inertia=np.ones(3),
+        t=np.array([0.0, 0.1, 0.2]),
+    )
+
+    assert len(history) == 3
+    with pytest.raises(ValueError, match="strictly increasing"):
+        simulate_free_body(
+            state,
+            force=np.zeros(3),
+            torque=np.zeros(3),
+            mass=1.0,
+            inertia=np.ones(3),
+            t=np.array([0.0, 0.0]),
+        )
