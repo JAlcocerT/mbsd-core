@@ -1,7 +1,17 @@
 import numpy as np
 import pytest
 
-from mbsd.spatial import Frame3D, Pose3D, Quaternion, SpatialBody, SpatialModel
+from mbsd.spatial import (
+    Frame3D,
+    Pose3D,
+    Quaternion,
+    SpatialBody,
+    SpatialModel,
+    SphericalJoint3D,
+    max_spatial_residual,
+    point_position,
+    spherical_joint_residual,
+)
 
 
 def test_quaternion_axis_angle_rotates_point():
@@ -38,3 +48,31 @@ def test_spatial_vocabulary_validates_inputs():
 
     with pytest.raises(ValueError, match="mass must be positive"):
         SpatialBody("bad", mass=0.0)
+
+
+def test_spatial_point_position_and_spherical_residual():
+    pose_i = Pose3D(translation=np.array([1.0, 0.0, 0.0]))
+    pose_j = Pose3D(translation=np.array([0.0, 1.0, 0.0]))
+
+    np.testing.assert_allclose(point_position(pose_i, np.array([0.0, 1.0, 0.0])), [1.0, 1.0, 0.0])
+    np.testing.assert_allclose(
+        spherical_joint_residual(
+            pose_i,
+            np.array([0.0, 1.0, 0.0]),
+            pose_j,
+            np.array([1.0, 0.0, 0.0]),
+        ),
+        [0.0, 0.0, 0.0],
+    )
+
+
+def test_spherical_joint_reports_residual_and_metadata():
+    joint = SphericalJoint3D(0, 1, np.array([0.0, 1.0, 0.0]), np.array([1.0, 0.0, 0.0]))
+    poses = [
+        Pose3D(translation=np.array([1.0, 0.0, 0.0])),
+        Pose3D(translation=np.array([0.0, 1.0, 0.0])),
+    ]
+
+    np.testing.assert_allclose(joint.residual(poses), [0.0, 0.0, 0.0])
+    assert max_spatial_residual([joint.residual(poses)]) == 0.0
+    assert joint.as_dict()["kind"] == "spherical"

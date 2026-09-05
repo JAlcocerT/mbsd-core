@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.0-dev - 3D Kinematics Preview
+
+Local development branch only.
+
+- Add experimental spatial point-position helpers.
+- Add `SphericalJoint3D` point-coincidence residuals.
+- Add `max_spatial_residual()` for simple 3D kinematic validation summaries.
+- Keep the preview residual-based; no general 3D position solver is claimed yet.
+
 ## v0.6.0-dev - 2D Solver Hardening
 
 Local development branch only.
