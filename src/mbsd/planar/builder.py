@@ -106,6 +106,41 @@ class ModelDiagnostics:
         }
 
 
+@dataclass(frozen=True)
+class ConfigurationDiagnostics:
+    """Single-configuration health summary for a planar mechanism."""
+
+    time: float
+    coordinates: int
+    constraints: int
+    constraint_norm: float
+    velocity_residual_norm: float | None
+    nominal_degrees_of_freedom: int
+    rank_degrees_of_freedom: int
+    jacobian_rank: int
+    singular: bool
+    finite: bool
+
+    @property
+    def degrees_of_freedom(self) -> int:
+        return self.rank_degrees_of_freedom
+
+    def as_dict(self) -> dict[str, float | int | bool | None]:
+        return {
+            "time": self.time,
+            "coordinates": self.coordinates,
+            "constraints": self.constraints,
+            "constraint_norm": self.constraint_norm,
+            "velocity_residual_norm": self.velocity_residual_norm,
+            "degrees_of_freedom": self.degrees_of_freedom,
+            "nominal_degrees_of_freedom": self.nominal_degrees_of_freedom,
+            "rank_degrees_of_freedom": self.rank_degrees_of_freedom,
+            "jacobian_rank": self.jacobian_rank,
+            "singular": self.singular,
+            "finite": self.finite,
+        }
+
+
 class Mechanism:
     """Factory namespace for supported mechanism formulations."""
 
@@ -424,6 +459,38 @@ class PlanarMechanism:
             rank_degrees_of_freedom=self.model.ncoord - rank,
             jacobian_rank=rank,
             singular=rank < min(Cq.shape),
+        )
+
+    def configuration_diagnostics(
+        self,
+        q: np.ndarray,
+        t: float = 0.0,
+        v: np.ndarray | None = None,
+    ) -> ConfigurationDiagnostics:
+        """Return residual and Jacobian health metrics for one configuration."""
+        t = _as_finite_scalar(t, "t")
+        q = _as_state(q, "q", self.model.ncoord)
+        C = constraints(self.model, q, t)
+        Cq = jacobian(self.model, q, t)
+        rank = int(np.linalg.matrix_rank(Cq))
+        velocity_residual_norm = None
+        finite = bool(np.all(np.isfinite(C)) and np.all(np.isfinite(Cq)))
+        if v is not None:
+            v = _as_state(v, "v", self.model.ncoord)
+            velocity_residual = Cq @ v + dt_constraints(self.model, q, t)
+            velocity_residual_norm = float(np.linalg.norm(velocity_residual, ord=np.inf))
+            finite = finite and bool(np.all(np.isfinite(velocity_residual)))
+        return ConfigurationDiagnostics(
+            time=t,
+            coordinates=self.model.ncoord,
+            constraints=self.model.nrestr,
+            constraint_norm=float(np.linalg.norm(C, ord=np.inf)) if C.size else 0.0,
+            velocity_residual_norm=velocity_residual_norm,
+            nominal_degrees_of_freedom=self.model.ncoord - self.model.nrestr,
+            rank_degrees_of_freedom=self.model.ncoord - rank,
+            jacobian_rank=rank,
+            singular=rank < min(Cq.shape),
+            finite=finite,
         )
 
     def to_dict(self) -> dict[str, Any]:

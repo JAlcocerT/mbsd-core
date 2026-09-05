@@ -3,6 +3,7 @@
 from ..errors import MechanismSolveError
 from .builder import (
     BodyHandle,
+    ConfigurationDiagnostics,
     DynamicsResult,
     KinematicResult,
     Mechanism,
@@ -17,6 +18,7 @@ from .synthesis import AffineFit, FourBar, FourBarPose
 __all__ = [
     "AffineFit",
     "BodyHandle",
+    "ConfigurationDiagnostics",
     "DynamicsResult",
     "FourBar",
     "FourBarPose",

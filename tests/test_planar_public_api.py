@@ -326,6 +326,31 @@ def test_model_diagnostics_reports_rank_and_dof():
     assert diagnostics.as_dict()["jacobian_rank"] == mechanism.nrestr
 
 
+def test_configuration_diagnostics_report_residuals_and_rank():
+    mechanism = Mechanism.planar(gravity=(0.0, 0.0))
+    ground = mechanism.ground()
+    slider = mechanism.body("slider")
+    mechanism.slider(ground, slider, axis=(1.0, 0.0))
+    mechanism.coordinate_drive(
+        slider,
+        "x",
+        value=lambda t: t,
+        velocity=lambda _t: 1.0,
+        acceleration=lambda _t: 0.0,
+    )
+    q = mechanism.solve_position(t=0.25)
+    v = mechanism.solve_velocity(q, t=0.25)
+
+    diagnostics = mechanism.configuration_diagnostics(q, t=0.25, v=v)
+
+    assert diagnostics.constraint_norm < 1e-10
+    assert diagnostics.velocity_residual_norm < 1e-10
+    assert diagnostics.jacobian_rank == mechanism.nrestr
+    assert diagnostics.degrees_of_freedom == 0
+    assert diagnostics.finite
+    assert diagnostics.as_dict()["time"] == 0.25
+
+
 def test_user_constraint_derivative_rows_follow_lower_level_constraints():
     mbody = MBody()
     mbody.bodies = [

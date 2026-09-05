@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.0-dev - 2D Solver Hardening
+
+Local development branch only.
+
+- Add `ConfigurationDiagnostics` for single-state residual and Jacobian health
+  checks.
+- Add `PlanarMechanism.configuration_diagnostics(q, t, v=None)` for PWA-style
+  validation panels and solver debugging.
+- Include velocity-level residuals when a velocity vector is supplied.
+
 ## v0.5.0-dev - Experimental 3D Vocabulary
 
 Local development branch only.
