@@ -80,6 +80,7 @@ m.result_to_csv(result, "trajectory.csv")
   trajectories.
 - Static model diagnostics with Jacobian rank, rank-based DOF, and nominal DOF.
 - JSON/CSV export helpers on the local `v0.4.0-dev` branch.
+- Experimental `mbsd.spatial` vocabulary on the local `v0.5.0-dev` branch.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with

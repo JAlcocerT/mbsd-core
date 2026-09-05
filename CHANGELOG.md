@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.0-dev - Experimental 3D Vocabulary
+
+Local development branch only.
+
+- Add experimental `mbsd.spatial` namespace.
+- Add `Quaternion`, `Pose3D`, `SpatialBody`, `Frame3D`, and `SpatialModel`.
+- Add JSON-ready spatial model export payloads.
+- Keep the 3D track vocabulary-only at this stage; no solved 3D kinematics or
+  dynamics are claimed yet.
+
 ## v0.4.0-dev - Export Schema
 
 Local development branch only.
