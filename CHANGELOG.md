@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.0-dev - Export Schema
+
+Local development branch only.
+
+- Add JSON-ready planar mechanism exports.
+- Add JSON-ready planar result exports with diagnostics.
+- Add wide CSV trajectory exports for solved results.
+- Add `PlanarMechanism.to_dict()`, `to_json()`, `result_to_dict()`,
+  `result_to_json()`, and `result_to_csv()`.
+- Record metadata for built-in motor and coordinate-drive constraints so export
+  consumers can identify them.
+- Keep browser/PWA implementation code outside `mbsd-core`; the core exposes
+  portable schemas for downstream apps.
+
 ## v0.3.0 - Week 3 Synthesis Preview
 
 Prepared release candidate.

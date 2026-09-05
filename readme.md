@@ -57,6 +57,15 @@ print(m.diagnostics(result).as_dict())
 print(result.q[3, -1])  # slider x at final time
 ```
 
+The local `v0.4.0-dev` branch includes portable export helpers for downstream
+apps:
+
+```python
+m.to_json("mechanism.json")
+m.result_to_json(result, "result.json")
+m.result_to_csv(result, "trajectory.csv")
+```
+
 ## What Works Now
 
 - Planar rigid bodies with reference coordinates `[x, y, theta]`.
@@ -70,6 +79,7 @@ print(result.q[3, -1])  # slider x at final time
 - Constraint residual, assertion, and diagnostics helpers for validating solved
   trajectories.
 - Static model diagnostics with Jacobian rank, rank-based DOF, and nominal DOF.
+- JSON/CSV export helpers on the local `v0.4.0-dev` branch.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with

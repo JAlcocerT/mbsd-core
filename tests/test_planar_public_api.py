@@ -1,3 +1,6 @@
+import csv
+import json
+
 import numpy as np
 import pytest
 
@@ -432,6 +435,53 @@ def test_diagnostics_validate_velocity_and_acceleration_arrays():
     bad_a[0, 0] = np.inf
     with pytest.raises(ValueError, match="result.a must contain only finite values"):
         mechanism.diagnostics(type(result)(t=result.t, q=result.q, v=result.v, a=bad_a))
+
+
+def test_planar_mechanism_and_result_exports_are_json_ready(tmp_path):
+    mechanism = Mechanism.planar(gravity=(0.0, 0.0))
+    ground = mechanism.ground()
+    slider = mechanism.body("slider", mass=1.0, inertia=0.01)
+    mechanism.slider(
+        ground,
+        slider,
+        axis=(1.0, 0.0),
+        point_rail=(0.1, 0.2),
+        point_slider=(-0.2, 0.3),
+    )
+    mechanism.coordinate_drive(
+        slider,
+        "x",
+        value=lambda t: 0.5 + t,
+        velocity=lambda _t: 1.0,
+        acceleration=lambda _t: 0.0,
+    )
+    q0 = np.zeros(mechanism.ncoord)
+    q0[3] = 0.5
+    q0[4] = -0.1
+    result = mechanism.solve_kinematics(np.linspace(0.0, 0.2, 3), q0=q0)
+
+    mechanism_payload = mechanism.to_dict()
+    result_payload = mechanism.result_to_dict(result)
+
+    assert mechanism_payload["schema"] == "mbsd.planar.mechanism"
+    assert mechanism_payload["counts"]["bodies"] == 2
+    assert mechanism_payload["joints"]["prismatic"][0]["axis"] == [1.0, -0.0]
+    assert mechanism_payload["user_constraints"][0]["kind"] == "coordinate_drive"
+    assert result_payload["schema"] == "mbsd.planar.result"
+    assert result_payload["result_type"] == "kinematic"
+    assert result_payload["diagnostics"]["max_constraint_residual"] < 1e-9
+    assert result_payload["body_poses"][1]["name"] == "slider"
+
+    mechanism_json = mechanism.to_json(tmp_path / "mechanism.json")
+    result_json = mechanism.result_to_json(result, tmp_path / "result.json")
+    trajectory_csv = mechanism.result_to_csv(result, tmp_path / "trajectory.csv")
+
+    assert json.loads(mechanism_json.read_text(encoding="utf-8"))["schema_version"] == 1
+    assert json.loads(result_json.read_text(encoding="utf-8"))["coordinates"]["a"]
+    with trajectory_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+    assert rows[0][:4] == ["time", "body0_ground_x", "body0_ground_y", "body0_ground_theta"]
+    assert len(rows) == len(result.t) + 1
 
 
 def test_slider_axis_is_normalized():

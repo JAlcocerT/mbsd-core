@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from pathlib import Path
+from typing import Any, Callable, Iterable
 
 import numpy as np
 
@@ -257,6 +258,13 @@ class PlanarMechanism:
             dtdt_constraint,
             count=1,
         )
+        drive.metadata = {
+            "kind": "motor",
+            "body": idx,
+            "coordinate": "theta",
+            "omega": omega,
+            "phase": phase,
+        }
         self.model.user_constraints.append(drive)
         return drive
 
@@ -306,6 +314,14 @@ class PlanarMechanism:
             dtdt_constraint,
             count=1,
         )
+        drive.metadata = {
+            "kind": "coordinate_drive",
+            "body": self._idx(body),
+            "coordinate": coordinate,
+            "value": getattr(value, "__name__", "callable"),
+            "velocity": getattr(velocity, "__name__", "callable"),
+            "acceleration": getattr(acceleration, "__name__", "callable"),
+        }
         self.model.user_constraints.append(drive)
         return drive
 
@@ -409,6 +425,54 @@ class PlanarMechanism:
             jacobian_rank=rank,
             singular=rank < min(Cq.shape),
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready mechanism export payload."""
+        from .export import mechanism_to_dict
+
+        return mechanism_to_dict(self)
+
+    def to_json(self, path: str | Path, *, indent: int = 2) -> Path:
+        """Write a mechanism export JSON file and return its path."""
+        from .export import mechanism_to_json
+
+        return mechanism_to_json(self, path, indent=indent)
+
+    def result_to_dict(
+        self,
+        result: KinematicResult | DynamicsResult,
+        *,
+        include_diagnostics: bool = True,
+    ) -> dict[str, Any]:
+        """Return a JSON-ready result export payload."""
+        from .export import result_to_dict
+
+        return result_to_dict(self, result, include_diagnostics=include_diagnostics)
+
+    def result_to_json(
+        self,
+        result: KinematicResult | DynamicsResult,
+        path: str | Path,
+        *,
+        indent: int = 2,
+        include_diagnostics: bool = True,
+    ) -> Path:
+        """Write a result export JSON file and return its path."""
+        from .export import result_to_json
+
+        return result_to_json(
+            self,
+            result,
+            path,
+            indent=indent,
+            include_diagnostics=include_diagnostics,
+        )
+
+    def result_to_csv(self, result: KinematicResult | DynamicsResult, path: str | Path) -> Path:
+        """Write a wide trajectory CSV file and return its path."""
+        from .export import result_to_csv
+
+        return result_to_csv(self, result, path)
 
     def solve_kinematics(
         self,
