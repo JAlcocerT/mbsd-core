@@ -1,5 +1,6 @@
 import csv
 import json
+from importlib.metadata import version
 
 import numpy as np
 import pytest
@@ -27,6 +28,10 @@ def test_rotation_matrix_is_proper():
 
 def test_top_level_public_api_is_small():
     assert sorted(mbsd.__all__) == ["Mechanism", "MechanismSolveError", "Spring"]
+
+
+def test_package_version_matches_installed_metadata():
+    assert mbsd.__version__ == version("mbsd")
 
 
 def test_driven_slider_tracks_prescribed_x_motion():
