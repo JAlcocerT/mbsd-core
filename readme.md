@@ -2,6 +2,9 @@
 
 Readable Python tools for planar multibody mechanism kinematics and dynamics.
 
+Runnable companion examples and generated gallery assets live in
+[MBSD Examples](https://github.com/JAlcocerT/mbsd-examples).
+
 MBSD is a small, inspectable mechanism framework. It is aimed at engineers,
 students, and researchers who want to script mechanisms directly in Python:
 declare bodies, joints, drives, springs, and forces, then solve the kinematics
@@ -119,10 +122,11 @@ solver kernel that stays close enough to the equations to inspect and modify.
 
 ## Repository Notes
 
-This repository is the first weekly OSS release. The historical workbench still
-contains course material, generated plots, animations, synthesis experiments,
-fluid mechanics work, CAD rendering, and a 3D MBSD kernel. This branch keeps
-only the public package surface under:
+This repository contains the installable framework for the weekly OSS release
+series. The historical workbench still contains course material, generated
+plots, animations, synthesis experiments, fluid mechanics work, CAD rendering,
+and a 3D MBSD kernel. Release branches keep only the public package surface
+under:
 
 ```text
 src/mbsd/
