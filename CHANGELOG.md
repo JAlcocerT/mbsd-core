@@ -5,8 +5,11 @@
 Local development branch only.
 
 - Add experimental `mbsd.spatial` namespace.
-- Add `Quaternion`, `Pose3D`, `SpatialBody`, `Frame3D`, and `SpatialModel`.
-- Add JSON-ready spatial model export payloads.
+- Add posed `SpatialBody` objects and world- or body-local `Frame3D` objects.
+- Add data-only spherical and fixed joint sketches with explicit world-body
+  references.
+- Add versioned JSON spatial model exports with SI units, coordinate
+  conventions, and caller metadata.
 - Keep the 3D track vocabulary-only at this stage; no solved 3D kinematics or
   dynamics are claimed yet.
 

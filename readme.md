@@ -89,6 +89,20 @@ Forward dynamics currently requires each body reference point to coincide with
 its center of mass. Offset-COM kinematics are accepted, but offset-COM dynamics
 raise a clear error until the corresponding inertial terms are implemented.
 
+## Experimental Spatial Vocabulary
+
+The local `v0.5.0-dev` branch defines data structures for 3D poses, bodies,
+frames, and fixed or spherical joint sketches under `mbsd.spatial`. It can write
+a versioned JSON model for visualization and geometry handoffs. This is a model
+vocabulary only: it does not solve 3D constraints, kinematics, or dynamics, and
+the API may change before `1.0`.
+
+Spatial data uses a right-handed XYZ world frame, metres, kilograms, seconds,
+and radians. Quaternions are `[w, x, y, z]` active rotations from body to world.
+Body inertia values are principal moments about the center of mass in the body
+frame. Joint points are body-local; a `None` body reference means the world and
+its point is expressed in world coordinates.
+
 ## Examples
 
 ```sh
