@@ -464,29 +464,180 @@ def test_planar_mechanism_and_result_exports_are_json_ready(tmp_path):
     q0[3] = 0.5
     q0[4] = -0.1
     result = mechanism.solve_kinematics(np.linspace(0.0, 0.2, 3), q0=q0)
+    spring = Spring(
+        i=int(ground),
+        j=int(slider),
+        k=20.0,
+        c=0.5,
+        l0=0.4,
+        ri=np.array([0.0, 0.0]),
+        rj=np.array([0.1, 0.0]),
+    )
 
-    mechanism_payload = mechanism.to_dict()
-    result_payload = mechanism.result_to_dict(result)
+    mechanism_payload = mechanism.to_dict(
+        springs=[spring],
+        metadata={"project": "slider-handoff", "revision": 1},
+    )
+    result_payload = mechanism.result_to_dict(result, metadata={"solver": "kinematic"})
 
+    assert {
+        "schema",
+        "schema_version",
+        "mbsd_version",
+        "dimension",
+        "units",
+        "conventions",
+        "metadata",
+        "gravity",
+        "counts",
+        "bodies",
+        "joints",
+        "user_constraints",
+        "forces",
+    } <= mechanism_payload.keys()
     assert mechanism_payload["schema"] == "mbsd.planar.mechanism"
+    assert mechanism_payload["schema_version"] == 1
+    assert mechanism_payload["units"]["length"] == "m"
+    assert mechanism_payload["units"]["angle"] == "rad"
+    assert mechanism_payload["conventions"]["rotation"] == "counterclockwise_positive"
+    assert mechanism_payload["metadata"]["project"] == "slider-handoff"
     assert mechanism_payload["counts"]["bodies"] == 2
     assert mechanism_payload["joints"]["prismatic"][0]["axis"] == [1.0, -0.0]
     assert mechanism_payload["user_constraints"][0]["kind"] == "coordinate_drive"
+    assert mechanism_payload["forces"]["springs"][0] == {
+        "index": 0,
+        "kind": "linear_spring_damper",
+        "body_i": 0,
+        "body_j": 1,
+        "point_i": [0.0, 0.0],
+        "point_j": [0.1, 0.0],
+        "stiffness": 20.0,
+        "damping": 0.5,
+        "natural_length": 0.4,
+    }
     assert result_payload["schema"] == "mbsd.planar.result"
     assert result_payload["result_type"] == "kinematic"
+    assert result_payload["units"]["time"] == "s"
+    assert result_payload["metadata"]["solver"] == "kinematic"
     assert result_payload["diagnostics"]["max_constraint_residual"] < 1e-9
     assert result_payload["body_poses"][1]["name"] == "slider"
+    json.dumps(mechanism_payload, allow_nan=False)
+    json.dumps(result_payload, allow_nan=False)
 
-    mechanism_json = mechanism.to_json(tmp_path / "mechanism.json")
-    result_json = mechanism.result_to_json(result, tmp_path / "result.json")
+    mechanism_json = mechanism.to_json(
+        tmp_path / "mechanism.json",
+        springs=[spring],
+        metadata={"consumer": "cad"},
+    )
+    result_json = mechanism.result_to_json(
+        result,
+        tmp_path / "result.json",
+        metadata={"consumer": "pwa"},
+    )
     trajectory_csv = mechanism.result_to_csv(result, tmp_path / "trajectory.csv")
 
     assert json.loads(mechanism_json.read_text(encoding="utf-8"))["schema_version"] == 1
     assert json.loads(result_json.read_text(encoding="utf-8"))["coordinates"]["a"]
     with trajectory_csv.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))
-    assert rows[0][:4] == ["time", "body0_ground_x", "body0_ground_y", "body0_ground_theta"]
+    assert rows[0][:4] == [
+        "time_s",
+        "body0_ground_x_m",
+        "body0_ground_y_m",
+        "body0_ground_theta_rad",
+    ]
     assert len(rows) == len(result.t) + 1
+
+
+def test_point_trace_exports_match_analytic_body_point_motion(tmp_path):
+    mechanism = Mechanism.planar(gravity=(0.0, 0.0))
+    ground = mechanism.ground()
+    slider = mechanism.body("slider", mass=1.0, inertia=0.01)
+    mechanism.slider(ground, slider, axis=(1.0, 0.0))
+    mechanism.coordinate_drive(
+        slider,
+        "x",
+        value=lambda t: 0.5 + t,
+        velocity=lambda _t: 1.0,
+        acceleration=lambda _t: 0.0,
+    )
+    result = mechanism.solve_kinematics(np.array([0.0, 0.1, 0.2]))
+
+    payload = mechanism.point_trace_to_dict(
+        result,
+        slider,
+        point=(0.2, 0.3),
+        name="cad_marker",
+        metadata={"layer": "linkage"},
+    )
+
+    assert payload["schema"] == "mbsd.planar.point_trace"
+    assert payload["point"] == {
+        "name": "cad_marker",
+        "body_index": 1,
+        "body_name": "slider",
+        "local_position": [0.2, 0.3],
+    }
+    np.testing.assert_allclose(payload["position"]["x"], [0.7, 0.8, 0.9], atol=1e-12)
+    np.testing.assert_allclose(payload["position"]["y"], [0.3, 0.3, 0.3], atol=1e-12)
+    np.testing.assert_allclose(payload["velocity"]["x"], 1.0, atol=1e-12)
+    np.testing.assert_allclose(payload["acceleration"]["x"], 0.0, atol=1e-12)
+
+    json_path = mechanism.point_trace_to_json(
+        result,
+        slider,
+        (0.2, 0.3),
+        tmp_path / "point.json",
+        name="cad_marker",
+    )
+    csv_path = mechanism.point_trace_to_csv(
+        result,
+        slider,
+        (0.2, 0.3),
+        tmp_path / "point.csv",
+        name="cad_marker",
+    )
+    assert json.loads(json_path.read_text(encoding="utf-8"))["point"]["name"] == "cad_marker"
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+    assert rows[0] == [
+        "time_s",
+        "x_m",
+        "y_m",
+        "vx_m_per_s",
+        "vy_m_per_s",
+        "ax_m_per_s2",
+        "ay_m_per_s2",
+    ]
+    assert len(rows) == 4
+
+
+def test_export_rejects_nonportable_inputs():
+    mechanism = Mechanism.planar()
+    ground = mechanism.ground()
+    body = mechanism.body("body")
+    mechanism.slider(ground, body, axis=(1.0, 0.0))
+    mechanism.coordinate_drive(
+        body,
+        "x",
+        value=lambda _t: 0.0,
+        velocity=lambda _t: 0.0,
+        acceleration=lambda _t: 0.0,
+    )
+    result = mechanism.solve_kinematics(np.array([0.0, 0.1]), q0=np.zeros(mechanism.ncoord))
+
+    with pytest.raises(TypeError, match="metadata must be a dictionary"):
+        mechanism.to_dict(metadata=["not", "a", "mapping"])
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        mechanism.to_dict(metadata={"callback": lambda: None})
+    with pytest.raises(ValueError, match="must be finite"):
+        mechanism.to_dict(metadata={"value": np.nan})
+    with pytest.raises(ValueError, match="natural length must be explicit"):
+        mechanism.to_dict(springs=[Spring(int(ground), int(body), k=1.0)])
+    with pytest.raises(IndexError, match="out of range"):
+        mechanism.point_trace_to_dict(result, 99)
+    with pytest.raises(ValueError, match="point must have shape"):
+        mechanism.point_trace_to_dict(result, body, point=(0.0, 0.0, 0.0))
 
 
 def test_slider_axis_is_normalized():
