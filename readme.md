@@ -2,31 +2,32 @@
 
 Readable Python tools for planar multibody mechanism kinematics and dynamics.
 
+Runnable companion examples and generated gallery assets live in
+[MBSD Examples](https://github.com/JAlcocerT/mbsd-examples).
+
 MBSD is a small, inspectable mechanism framework. It is aimed at engineers,
 students, and researchers who want to script mechanisms directly in Python:
 declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
 The public API is intentionally focused on **2D planar mechanisms**. Plotting,
-CAD/export, gallery, browser-demo, larger synthesis workflows, and 3D work
-will be released separately after the core API is stable.
+gallery, browser UI, larger synthesis workflows, CAD-specific integrations, and
+3D work remain separate while the core API stabilizes. Portable JSON and CSV
+exports are provided for downstream applications and neutral CAD handoffs.
 
 ## Install
 
-```sh
+```bash
+git clone https://github.com/JAlcocerT/mbsd-core.git
+cd mbsd-core
+git checkout v0.4.0
 uv sync --extra dev
 ```
 
-Plain pip also works:
+Plain pip and the optional plotting extra also work from the cloned repository:
 
-```sh
-pip install -e .[dev]
-```
-
-Plotting is optional:
-
-```sh
-pip install -e .[plot]
+```bash
+python -m pip install -e ".[dev,plot]"
 ```
 
 ## Quick Start
@@ -57,13 +58,14 @@ print(m.diagnostics(result).as_dict())
 print(result.q[3, -1])  # slider x at final time
 ```
 
-The local `v0.4.0-dev` branch includes portable export helpers for downstream
-apps:
+MBSD `0.4.0` includes portable export helpers for downstream applications:
 
 ```python
 m.to_json("mechanism.json")
 m.result_to_json(result, "result.json")
 m.result_to_csv(result, "trajectory.csv")
+m.point_trace_to_json(result, slider, (0.2, 0.0), "slider-point.json")
+m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
 ```
 
 ## What Works Now
@@ -79,7 +81,7 @@ m.result_to_csv(result, "trajectory.csv")
 - Constraint residual, assertion, and diagnostics helpers for validating solved
   trajectories.
 - Static model diagnostics with Jacobian rank, rank-based DOF, and nominal DOF.
-- JSON/CSV export helpers on the local `v0.4.0-dev` branch.
+- Versioned JSON and CSV mechanism, result, and body-point export helpers.
 - Experimental `mbsd.spatial` vocabulary on the local `v0.5.0-dev` branch.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
@@ -130,10 +132,11 @@ solver kernel that stays close enough to the equations to inspect and modify.
 
 ## Repository Notes
 
-This repository is the first weekly OSS release. The historical workbench still
-contains course material, generated plots, animations, synthesis experiments,
-fluid mechanics work, CAD rendering, and a 3D MBSD kernel. This branch keeps
-only the public package surface under:
+This repository contains the installable framework for the weekly OSS release
+series. The historical workbench still contains course material, generated
+plots, animations, synthesis experiments, fluid mechanics work, CAD rendering,
+and a 3D MBSD kernel. Release branches keep only the public package surface
+under:
 
 ```text
 src/mbsd/
@@ -144,6 +147,35 @@ workflows, and 3D mechanisms are intentionally outside this core repository.
 
 Longer-form docs, release planning, and website content live outside this core
 package repository.
+
+## Export Contract
+
+The `0.4.0` handoff schemas are:
+
+- `mbsd.planar.mechanism`: bodies, joints, drives, gravity, explicit
+  spring-damper descriptors, units, conventions, and caller metadata.
+- `mbsd.planar.result`: time, body coordinates, velocities, optional
+  accelerations, body poses, diagnostics, units, conventions, and metadata.
+- `mbsd.planar.point_trace`: position, velocity, and optional acceleration for
+  a named point expressed in a body's local frame.
+
+Every JSON payload contains `schema`, `schema_version`, and `mbsd_version`.
+Lengths use metres, angles use radians, time uses seconds, and rotations are
+counterclockwise-positive in an inertial XY frame. Array-valued result data is
+stored component-by-time. CSV headers carry their SI units.
+
+Springs are supplied explicitly when exporting a mechanism:
+
+```python
+from mbsd import Spring
+
+spring = Spring(int(ground), int(slider), k=20.0, c=0.5, l0=0.4)
+m.to_json("mechanism.json", springs=[spring], metadata={"consumer": "cad"})
+```
+
+A spring must have an explicit natural length to be portable. Arbitrary Python
+force callbacks are intentionally not serialized; consumers should exchange
+supported force descriptors or application-specific metadata instead.
 
 ## Consulting
 
