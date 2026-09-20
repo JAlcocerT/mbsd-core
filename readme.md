@@ -20,7 +20,7 @@ exports are provided for downstream applications and neutral CAD handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.4.0
+git checkout v0.5.0
 uv sync --extra dev
 ```
 
@@ -82,7 +82,7 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
   trajectories.
 - Static model diagnostics with Jacobian rank, rank-based DOF, and nominal DOF.
 - Versioned JSON and CSV mechanism, result, and body-point export helpers.
-- Experimental `mbsd.spatial` vocabulary on the local `v0.5.0-dev` branch.
+- Experimental `mbsd.spatial` vocabulary for portable 3D model descriptions.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
@@ -91,11 +91,11 @@ raise a clear error until the corresponding inertial terms are implemented.
 
 ## Experimental Spatial Vocabulary
 
-The local `v0.5.0-dev` branch defines data structures for 3D poses, bodies,
-frames, and fixed or spherical joint sketches under `mbsd.spatial`. It can write
-a versioned JSON model for visualization and geometry handoffs. This is a model
-vocabulary only: it does not solve 3D constraints, kinematics, or dynamics, and
-the API may change before `1.0`.
+MBSD `0.5.0` defines data structures for 3D poses, bodies, frames, and fixed or
+spherical joint sketches under `mbsd.spatial`. It can write a versioned JSON
+model for visualization and geometry handoffs. This is a model vocabulary only:
+it does not solve 3D constraints, kinematics, or dynamics, and the API may
+change before `1.0`.
 
 Spatial data uses a right-handed XYZ world frame, metres, kilograms, seconds,
 and radians. Quaternions are `[w, x, y, z]` active rotations from body to world.

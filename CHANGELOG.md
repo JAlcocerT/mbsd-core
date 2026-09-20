@@ -1,8 +1,8 @@
 # Changelog
 
-## v0.5.0-dev - Experimental 3D Vocabulary
+## v0.5.0 - Experimental 3D Vocabulary
 
-Local development branch only.
+Week 5 release.
 
 - Add experimental `mbsd.spatial` namespace.
 - Add posed `SpatialBody` objects and world- or body-local `Frame3D` objects.

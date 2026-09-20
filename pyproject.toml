@@ -1,6 +1,6 @@
 [project]
 name = "mbsd"
-version = "0.5.0.dev0"
+version = "0.5.0"
 description = "Readable Python tools for planar multibody mechanism kinematics and dynamics."
 readme = "readme.md"
 requires-python = ">=3.10"
