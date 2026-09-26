@@ -24,6 +24,19 @@ from .forces import (
 )
 
 
+def ensure_centroidal_dynamics(mbody) -> None:
+    """Reject models whose unsupported offset-COM terms would corrupt dynamics."""
+    from ..errors import MechanismSolveError
+
+    for index, body in enumerate(mbody.bodies):
+        if np.linalg.norm(body.rG, ord=np.inf) > 0.0:
+            raise MechanismSolveError(
+                "Dynamics currently requires each body reference point to "
+                "coincide with its center of mass. "
+                f"Body {index} ({body.name!r}) has center_of_mass={body.rG}."
+            )
+
+
 def assemble_system(mbody, q, v, t, springs=None, Q_user=None,
                     omega=0, alpha=0, contacts=None, surface_contacts=None):
     """Assemble all generalized forces and the mass matrix.
@@ -109,6 +122,7 @@ def solve_inverse_dynamics(mbody, q0, tspan, springs=None, Q_user_fn=None,
         Q_total_all:          (ncoord × nsteps) summed passive/applied forces
             (useful for checking the force balance afterwards)
     """
+    ensure_centroidal_dynamics(mbody)
     ncoord = mbody.ncoord
     nrestr = mbody.nrestr
     nsteps = len(tspan)
@@ -151,17 +165,19 @@ def solve_inverse_dynamics(mbody, q0, tspan, springs=None, Q_user_fn=None,
     return q_all, v_all, a_all, lambda_all, Q_total_all
 
 
-def solve_dynamics_rk45(mbody, q0, v0, tspan, springs=None, Q_user_fn=None,
-                        omega=0, alpha=0, verbose=False):
-    """Solve dynamics using RK45 integrator.
-
-    This is a higher-level integration that uses the kinematic solver for
-    position and acceleration at each time step.
-
-    Approach:
-        1. At each time step: solve position (C(q, t) = 0)
-        2. Compute forces and accelerations
-        3. Integrate: v_new = v + a*dt, q_new = q + v*dt
+def solve_dynamics_rk45(
+    mbody,
+    q0,
+    v0,
+    tspan,
+    springs=None,
+    Q_user_fn=None,
+    omega=0,
+    alpha=0,
+    verbose=False,
+    allow_underconstrained=False,
+):
+    """Integrate dynamics with SciPy RK45 and return sampled reactions.
 
     Args:
         mbody: MBody mechanism definition
@@ -172,71 +188,56 @@ def solve_dynamics_rk45(mbody, q0, v0, tspan, springs=None, Q_user_fn=None,
         Q_user_fn: function Q_user(t, q, v) for user forces
         omega: angular velocity of reference frame
         alpha: angular acceleration of reference frame
-        verbose: print progress
+        verbose: print sampled energy progress
+        allow_underconstrained: permit mechanisms with free coordinates
 
     Returns:
         q_all: positions (ncoord x nsteps)
         v_all: velocities (ncoord x nsteps)
         a_all: accelerations (ncoord x nsteps)
         t_all: time array
+        lambda_all: Lagrange multipliers (nrestr x nsteps)
+        reaction_all: generalized constraint reactions (ncoord x nsteps)
     """
-    nsteps = len(tspan)
-    ncoord = mbody.ncoord
+    ensure_centroidal_dynamics(mbody)
+    sol = solve_dynamics_scipy(
+        mbody,
+        np.asarray(q0, dtype=float),
+        np.asarray(v0, dtype=float),
+        np.asarray(tspan, dtype=float),
+        springs=springs,
+        Q_user_fn=Q_user_fn,
+        method="RK45",
+        omega=omega,
+        alpha=alpha,
+        allow_underconstrained=allow_underconstrained,
+    )
+    if not sol.success:
+        from ..errors import MechanismSolveError
 
-    q_all = np.zeros((ncoord, nsteps))
-    v_all = np.zeros((ncoord, nsteps))
-    a_all = np.zeros((ncoord, nsteps))
+        raise MechanismSolveError(f"Dynamic integration failed: {sol.message}")
 
-    # Get number of constraints to store Lagrange multipliers and constraint forces
-    from .constraints import constraints as compute_constraints
-    C_test = compute_constraints(mbody, q0, tspan[0])
-    nc = len(C_test)  # number of constraints
+    q_all, v_all, t_all = extract_dynamics_solution(mbody, sol)
+    nsteps = len(t_all)
+    a_all = np.zeros_like(q_all)
+    lambda_all = np.zeros((mbody.nrestr, nsteps))
+    reaction_all = np.zeros_like(q_all)
+    for index, t in enumerate(t_all):
+        q = q_all[:, index]
+        v = v_all[:, index]
+        Q_user = Q_user_fn(t, q, v) if Q_user_fn is not None else None
+        Q_total, mass = assemble_system(mbody, q, v, t, springs, Q_user, omega, alpha)
+        acceleration, multipliers = solve_acceleration_with_lagrange(
+            mbody, q, v, t, mass, Q_total
+        )
+        a_all[:, index] = acceleration
+        lambda_all[:, index] = multipliers
+        reaction_all[:, index] = jacobian(mbody, q, t).T @ multipliers
+        if verbose and index % max(1, nsteps // 10) == 0:
+            energy = kinetic_energy(mass, v) + potential_energy(mbody, q, springs=springs)
+            print(f"  Step {index}/{nsteps}, t = {t:.3f}s, E = {energy:.3f} J")
 
-    lambda_all = np.zeros((nc, nsteps))  # Lagrange multipliers
-    F_constraint_all = np.zeros((ncoord, nsteps))  # Constraint reaction forces
-
-    q = q0.copy()
-    v = v0.copy()
-    q_guess = q0.copy()
-
-    for i, t in enumerate(tspan):
-        mbody.t = t
-
-        # Solve position: C(q, t) = 0
-        q = solve_position(mbody, q_guess, t, allow_underconstrained=True)
-        q_all[:, i] = q
-
-        # Solve velocity: C_q @ v = -dC/dt
-        v = solve_velocity(mbody, q, t, allow_underconstrained=True)
-        v_all[:, i] = v
-
-        # Compute user forces if provided
-        Q_user = None
-        if Q_user_fn is not None:
-            Q_user = Q_user_fn(t, q, v)
-
-        # Assemble forces
-        Q_total, M = assemble_system(mbody, q, v, t, springs, Q_user, omega, alpha)
-
-        # Solve accelerations with Lagrange multipliers
-        a, lambda_t = solve_acceleration_with_lagrange(mbody, q, v, t, M, Q_total)
-        a_all[:, i] = a
-        lambda_all[:, i] = lambda_t
-
-        # Compute constraint reaction forces: F_constraint = C_q^T @ λ
-        from .jacobians import jacobian
-        Cq = jacobian(mbody, q, t)
-        F_constraint_all[:, i] = Cq.T @ lambda_t
-
-        q_guess = q.copy()
-
-        if verbose and (i % max(1, nsteps // 10) == 0):
-            T = kinetic_energy(M, v)
-            V = potential_energy(mbody, q, springs=springs)
-            E = T + V
-            print(f"  Step {i}/{nsteps}, t = {t:.3f}s, E = {E:.3f} J")
-
-    return q_all, v_all, a_all, tspan, lambda_all, F_constraint_all
+    return q_all, v_all, a_all, t_all, lambda_all, reaction_all
 
 
 def _solve_acceleration_baumgarte(mbody, q, v, t, M, Q_total,
@@ -336,6 +337,21 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
     Returns:
         sol: scipy OdeResult object with attributes t, y (solution at times)
     """
+    ensure_centroidal_dynamics(mbody)
+    if mbody.nrestr < mbody.ncoord and not allow_underconstrained:
+        from ..errors import MechanismSolveError
+
+        raise MechanismSolveError(
+            "Underconstrained dynamics requires allow_underconstrained=True: "
+            f"{mbody.nrestr} constraints for {mbody.ncoord} coordinates."
+        )
+    if mbody.nrestr > mbody.ncoord:
+        from ..errors import MechanismSolveError
+
+        raise MechanismSolveError(
+            "Overconstrained dynamics model: "
+            f"{mbody.nrestr} constraints for {mbody.ncoord} coordinates."
+        )
     use_baumgarte = (alpha_baumgarte != 0.0) or (beta_baumgarte != 0.0)
 
     def dynamics_rhs(t, state):

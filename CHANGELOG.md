@@ -9,6 +9,15 @@ Local development branch only.
 - Add `PlanarMechanism.configuration_diagnostics(q, t, v=None)` for PWA-style
   validation panels and solver debugging.
 - Include velocity-level residuals when a velocity vector is supplied.
+- Classify fully constrained, underconstrained, overconstrained, and
+  rank-deficient configurations explicitly.
+- Make `solve_dynamics_rk45()` perform genuine RK45 integration and preserve
+  caller-supplied initial velocities.
+- Reject unsupported offset-center-of-mass models at every dynamics entry
+  point, including lower-level functions.
+- Harden experimental spatial values, collection invariants, inertia checks,
+  and frame-pose export conventions.
+- Build and import-test distributions in CI.
 
 ## v0.5.0 - Experimental 3D Vocabulary
 

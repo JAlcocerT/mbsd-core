@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 import numpy as np
@@ -27,9 +28,10 @@ class Quaternion:
         values = self.as_array()
         if not np.all(np.isfinite(values)):
             raise ValueError("quaternion components must be finite")
-        if np.linalg.norm(values) == 0.0:
+        norm = np.linalg.norm(values)
+        if norm == 0.0:
             raise ValueError("quaternion norm must be non-zero")
-        for name, value in zip(("w", "x", "y", "z"), values):
+        for name, value in zip(("w", "x", "y", "z"), values / norm):
             object.__setattr__(self, name, float(value))
 
     @staticmethod
@@ -135,6 +137,12 @@ class SpatialBody:
         inertia = _as_vector(self.inertia, "inertia", 3)
         if np.any(inertia <= 0.0):
             raise ValueError("body inertia values must be positive")
+        tolerance = np.finfo(float).eps * max(1.0, float(np.max(inertia))) * 16.0
+        if any(
+            inertia[index] > np.sum(inertia) - inertia[index] + tolerance
+            for index in range(3)
+        ):
+            raise ValueError("body principal inertia values must satisfy triangle inequalities")
         object.__setattr__(self, "mass", mass)
         object.__setattr__(self, "inertia", inertia)
         object.__setattr__(
@@ -252,16 +260,28 @@ class SpatialModel:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        bodies = tuple(self.bodies)
+        frames = tuple(self.frames)
+        joints = tuple(self.joints)
+        _validate_members(bodies, SpatialBody, "bodies")
+        _validate_members(frames, Frame3D, "frames")
+        _validate_joint_members(joints)
+        _validate_unique_names(bodies, "body")
+        _validate_unique_names(frames, "frame")
+        _validate_unique_names(joints, "joint")
         if not isinstance(self.metadata, Mapping):
             raise TypeError("metadata must be a mapping")
-        object.__setattr__(self, "metadata", _json_ready(dict(self.metadata)))
-        for frame in self.frames:
+        object.__setattr__(self, "bodies", bodies)
+        object.__setattr__(self, "frames", frames)
+        object.__setattr__(self, "joints", joints)
+        object.__setattr__(self, "metadata", _freeze_json(dict(self.metadata)))
+        for frame in frames:
             _validate_model_body_reference(
                 frame.parent_body,
                 len(self.bodies),
                 "frame parent_body",
             )
-        for joint in self.joints:
+        for joint in joints:
             self._validate_joint_references(joint)
 
     def with_body(self, body: SpatialBody) -> "SpatialModel":
@@ -320,11 +340,13 @@ class SpatialModel:
                 "world_frame": "right_handed_xyz",
                 "rotation": "active_body_to_world",
                 "quaternion_order": ["w", "x", "y", "z"],
-                "pose_translation": "world_xyz",
+                "body_pose": "body_to_world",
+                "frame_pose": "parent_body_local; world_when_parent_body_is_null",
+                "fixed_joint_frames": "body_local; world_when_body_is_null",
                 "inertia": "principal_moments_about_com_in_body_frame",
                 "joint_points": "body_local_xyz; world_xyz_when_body_is_null",
             },
-            "metadata": dict(self.metadata),
+            "metadata": _json_ready(self.metadata),
             "bodies": [body.as_dict(index) for index, body in enumerate(self.bodies)],
             "frames": [frame.as_dict() for frame in self.frames],
             "joints": [joint.as_dict(index) for index, joint in enumerate(self.joints)],
@@ -345,12 +367,12 @@ class SpatialModel:
 
 
 def _as_vector(value: ArrayLike3, name: str, length: int) -> np.ndarray:
-    arr = np.asarray(value, dtype=float)
+    arr = np.array(value, dtype=float, copy=True)
     if arr.shape != (length,):
         raise ValueError(f"{name} must be a finite vector with shape ({length},)")
     if not np.all(np.isfinite(arr)):
         raise ValueError(f"{name} must contain only finite values")
-    return arr
+    return np.frombuffer(arr.tobytes(), dtype=arr.dtype).reshape(arr.shape)
 
 
 def _as_finite_scalar(value: float, name: str) -> float:
@@ -410,6 +432,33 @@ def _json_ready(value: Any) -> Any:
             raise ValueError("metadata numbers must be finite")
         return value
     raise TypeError(f"metadata value of type {type(value).__name__} is not JSON serializable")
+
+
+def _freeze_json(value: Any) -> Any:
+    value = _json_ready(value)
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _validate_members(values: tuple[Any, ...], expected: type, name: str) -> None:
+    for index, value in enumerate(values):
+        if not isinstance(value, expected):
+            raise TypeError(f"{name}[{index}] must be a {expected.__name__}")
+
+
+def _validate_joint_members(joints: tuple[Any, ...]) -> None:
+    for index, joint in enumerate(joints):
+        if not isinstance(joint, (SphericalJoint3D, FixedJoint3D)):
+            raise TypeError(f"joints[{index}] must be a SphericalJoint3D or FixedJoint3D")
+
+
+def _validate_unique_names(values: tuple[Any, ...], kind: str) -> None:
+    names = [value.name for value in values]
+    if len(names) != len(set(names)):
+        raise ValueError(f"{kind} names must be unique")
 
 
 def _package_version() -> str:

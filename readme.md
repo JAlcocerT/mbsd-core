@@ -10,10 +10,11 @@ students, and researchers who want to script mechanisms directly in Python:
 declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
-The public API is intentionally focused on **2D planar mechanisms**. Plotting,
-gallery, browser UI, larger synthesis workflows, CAD-specific integrations, and
-3D work remain separate while the core API stabilizes. Portable JSON and CSV
-exports are provided for downstream applications and neutral CAD handoffs.
+The stable solver API is intentionally focused on **2D planar mechanisms**.
+Core also contains an experimental spatial data vocabulary, but not a 3D
+solver. Plotting, gallery, browser UI, larger synthesis workflows, and
+CAD-specific integrations remain separate while the API stabilizes. Portable
+JSON and CSV exports support downstream applications and neutral CAD handoffs.
 
 ## Install
 
@@ -157,8 +158,10 @@ under:
 src/mbsd/
 ```
 
-Plotting, CAD/export, browser demos, gallery assets, larger synthesis
-workflows, and 3D mechanisms are intentionally outside this core repository.
+Plotting, CAD-specific integrations, browser demos, gallery assets, larger
+synthesis workflows, and solved 3D mechanisms are intentionally outside this
+core repository. Experimental spatial description and export objects live
+under `mbsd.spatial`.
 
 Longer-form docs, release planning, and website content live outside this core
 package repository.

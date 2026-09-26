@@ -9,6 +9,11 @@ import mbsd
 from mbsd import Mechanism, MechanismSolveError, Spring
 from mbsd.planar.constraints import constraints
 from mbsd.planar.derivatives import dt_constraints, dt_jacobian, dtdt_constraints
+from mbsd.planar.dynamics import (
+    solve_dynamics_rk45,
+    solve_dynamics_scipy,
+    solve_inverse_dynamics,
+)
 from mbsd.planar.jacobians import jacobian
 from mbsd.planar.kinematics import rot_mat
 from mbsd.planar.model import Body, GearJoint, MBody, PrismJoint, UserConstraint
@@ -325,6 +330,10 @@ def test_model_diagnostics_reports_rank_and_dof():
     assert diagnostics.nominal_degrees_of_freedom == 1
     assert diagnostics.rank_degrees_of_freedom == 1
     assert diagnostics.jacobian_rank == mechanism.nrestr
+    assert diagnostics.classification == "underconstrained"
+    assert diagnostics.underconstrained
+    assert not diagnostics.overconstrained
+    assert not diagnostics.rank_deficient
     assert not diagnostics.singular
     assert diagnostics.as_dict()["nominal_degrees_of_freedom"] == 1
     assert diagnostics.as_dict()["rank_degrees_of_freedom"] == 1
@@ -352,8 +361,95 @@ def test_configuration_diagnostics_report_residuals_and_rank():
     assert diagnostics.velocity_residual_norm < 1e-10
     assert diagnostics.jacobian_rank == mechanism.nrestr
     assert diagnostics.degrees_of_freedom == 0
+    assert diagnostics.classification == "fully_constrained"
     assert diagnostics.finite
     assert diagnostics.as_dict()["time"] == 0.25
+
+
+def test_configuration_diagnostics_classify_overconstrained_model():
+    mechanism = Mechanism.planar(gravity=(0.0, 0.0))
+    ground = mechanism.ground()
+    body = mechanism.body("body")
+    mechanism.slider(ground, body, axis=(1.0, 0.0))
+    for coordinate in ("x", "y"):
+        mechanism.coordinate_drive(
+            body,
+            coordinate,
+            value=lambda _t: 0.0,
+            velocity=lambda _t: 0.0,
+            acceleration=lambda _t: 0.0,
+        )
+
+    diagnostics = mechanism.configuration_diagnostics(np.zeros(mechanism.ncoord))
+
+    assert diagnostics.classification == "overconstrained"
+    assert diagnostics.overconstrained
+
+
+def test_configuration_diagnostics_classify_rank_deficient_square_model():
+    mechanism = Mechanism.planar(gravity=(0.0, 0.0))
+    ground = mechanism.ground()
+    body = mechanism.body("body")
+    mechanism.pin(ground, body)
+    mechanism.coordinate_drive(
+        body,
+        "x",
+        value=lambda _t: 0.0,
+        velocity=lambda _t: 0.0,
+        acceleration=lambda _t: 0.0,
+    )
+
+    diagnostics = mechanism.configuration_diagnostics(np.zeros(mechanism.ncoord))
+
+    assert diagnostics.constraints == diagnostics.coordinates
+    assert diagnostics.classification == "rank_deficient"
+    assert diagnostics.rank_deficient
+    assert diagnostics.singular
+
+
+def test_lower_level_rk45_preserves_free_body_velocity():
+    model = MBody()
+    model.g = np.zeros(2)
+    model.bodies.extend([Body("ground"), Body("free", mass=1.0, inertia=1.0)])
+    t = np.array([0.0, 0.1, 0.2])
+    q0 = np.zeros(model.ncoord)
+    v0 = np.zeros(model.ncoord)
+    v0[3] = 1.0
+
+    q, v, acceleration, t_out, multipliers, reactions = solve_dynamics_rk45(
+        model,
+        q0,
+        v0,
+        t,
+        allow_underconstrained=True,
+    )
+
+    np.testing.assert_allclose(t_out, t)
+    np.testing.assert_allclose(q[3], t, atol=1e-10)
+    np.testing.assert_allclose(v[3], 1.0, atol=1e-10)
+    np.testing.assert_allclose(acceleration, 0.0, atol=1e-10)
+    assert multipliers.shape == (3, len(t))
+    np.testing.assert_allclose(reactions, 0.0, atol=1e-10)
+
+
+@pytest.mark.parametrize("entry_point", ["scipy", "rk45", "inverse"])
+def test_lower_level_dynamics_reject_offset_center_of_mass(entry_point):
+    model = MBody()
+    model.g = np.zeros(2)
+    model.bodies.append(
+        Body("offset", mass=1.0, inertia=1.0, rG=np.array([0.2, 0.0]))
+    )
+    q0 = np.zeros(model.ncoord)
+    v0 = np.zeros(model.ncoord)
+    t = np.array([0.0, 0.1])
+
+    with pytest.raises(MechanismSolveError, match="center of mass"):
+        if entry_point == "scipy":
+            solve_dynamics_scipy(model, q0, v0, t, allow_underconstrained=True)
+        elif entry_point == "rk45":
+            solve_dynamics_rk45(model, q0, v0, t, allow_underconstrained=True)
+        else:
+            solve_inverse_dynamics(model, q0, t)
 
 
 def test_user_constraint_derivative_rows_follow_lower_level_constraints():

@@ -36,3 +36,12 @@ jobs:
 
       - name: Run ruff
         run: uv run ruff check .
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Smoke test built wheel
+        run: |
+          uv venv "$RUNNER_TEMP/mbsd-wheel-smoke"
+          uv pip install --python "$RUNNER_TEMP/mbsd-wheel-smoke/bin/python" dist/mbsd-*.whl
+          "$RUNNER_TEMP/mbsd-wheel-smoke/bin/python" -c "import mbsd; print(mbsd.__version__)"
