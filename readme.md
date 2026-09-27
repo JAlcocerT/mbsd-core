@@ -21,7 +21,7 @@ JSON and CSV exports support downstream applications and neutral CAD handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.5.0
+git checkout v0.6.0
 uv sync --extra dev
 ```
 
@@ -84,7 +84,7 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
 - Static model diagnostics with Jacobian rank, rank-based DOF, and nominal DOF.
 - Versioned JSON and CSV mechanism, result, and body-point export helpers.
 - Experimental `mbsd.spatial` vocabulary for portable 3D model descriptions.
-- Per-configuration solver diagnostics on the local `v0.6.0-dev` branch.
+- Per-configuration solver diagnostics with explicit model classification.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with

@@ -1,8 +1,8 @@
 # Changelog
 
-## v0.6.0-dev - 2D Solver Hardening
+## v0.6.0 - Solver and Contract Hardening
 
-Local development branch only.
+Week 6 release.
 
 - Add `ConfigurationDiagnostics` for single-state residual and Jacobian health
   checks.
