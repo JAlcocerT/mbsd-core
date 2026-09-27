@@ -106,6 +106,13 @@ Body inertia values are principal moments about the center of mass in the body
 frame. Joint points are body-local; a `None` body reference means the world and
 its point is expressed in world coordinates.
 
+## Experimental Spatial Kinematics
+
+The local `v0.7.0-dev` branch adds point transforms, pose composition and
+inversion, and spherical-joint point-coincidence residuals. These helpers
+evaluate supplied poses; they do not provide a general spatial position,
+velocity, or acceleration solver. The namespace remains experimental.
+
 ## Examples
 
 ```sh

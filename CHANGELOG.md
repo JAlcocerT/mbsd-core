@@ -4,8 +4,10 @@
 
 Local development branch only.
 
-- Add experimental spatial point-position helpers.
-- Add `SphericalJoint3D` point-coincidence residuals.
+- Add experimental spatial point-position, pose-composition, and pose-inverse
+  helpers.
+- Add point-coincidence residual evaluation to the canonical vocabulary
+  `SphericalJoint3D`, including world endpoints.
 - Add `max_spatial_residual()` for simple 3D kinematic validation summaries.
 - Keep the preview residual-based; no general 3D position solver is claimed yet.
 
