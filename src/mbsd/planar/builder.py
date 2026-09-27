@@ -8,7 +8,8 @@ from typing import Any, Callable, Iterable
 
 import numpy as np
 
-from .dynamics import extract_dynamics_solution, solve_dynamics_scipy
+from .dynamics import ensure_centroidal_dynamics, extract_dynamics_solution, solve_dynamics_scipy
+from .forces import Spring
 from .constraints import constraints
 from .derivatives import dt_constraints
 from .jacobians import jacobian
@@ -88,13 +89,17 @@ class ModelDiagnostics:
     nominal_degrees_of_freedom: int
     rank_degrees_of_freedom: int
     jacobian_rank: int
+    classification: str
+    underconstrained: bool
+    overconstrained: bool
+    rank_deficient: bool
     singular: bool
 
     @property
     def degrees_of_freedom(self) -> int:
         return self.rank_degrees_of_freedom
 
-    def as_dict(self) -> dict[str, int | bool]:
+    def as_dict(self) -> dict[str, int | bool | str]:
         return {
             "coordinates": self.coordinates,
             "constraints": self.constraints,
@@ -102,6 +107,10 @@ class ModelDiagnostics:
             "nominal_degrees_of_freedom": self.nominal_degrees_of_freedom,
             "rank_degrees_of_freedom": self.rank_degrees_of_freedom,
             "jacobian_rank": self.jacobian_rank,
+            "classification": self.classification,
+            "underconstrained": self.underconstrained,
+            "overconstrained": self.overconstrained,
+            "rank_deficient": self.rank_deficient,
             "singular": self.singular,
         }
 
@@ -118,6 +127,10 @@ class ConfigurationDiagnostics:
     nominal_degrees_of_freedom: int
     rank_degrees_of_freedom: int
     jacobian_rank: int
+    classification: str
+    underconstrained: bool
+    overconstrained: bool
+    rank_deficient: bool
     singular: bool
     finite: bool
 
@@ -125,7 +138,7 @@ class ConfigurationDiagnostics:
     def degrees_of_freedom(self) -> int:
         return self.rank_degrees_of_freedom
 
-    def as_dict(self) -> dict[str, float | int | bool | None]:
+    def as_dict(self) -> dict[str, float | int | bool | str | None]:
         return {
             "time": self.time,
             "coordinates": self.coordinates,
@@ -136,6 +149,10 @@ class ConfigurationDiagnostics:
             "nominal_degrees_of_freedom": self.nominal_degrees_of_freedom,
             "rank_degrees_of_freedom": self.rank_degrees_of_freedom,
             "jacobian_rank": self.jacobian_rank,
+            "classification": self.classification,
+            "underconstrained": self.underconstrained,
+            "overconstrained": self.overconstrained,
+            "rank_deficient": self.rank_deficient,
             "singular": self.singular,
             "finite": self.finite,
         }
@@ -452,13 +469,28 @@ class PlanarMechanism:
         q = _as_state(q, "q", self.model.ncoord)
         Cq = jacobian(self.model, q, _as_finite_scalar(t, "t"))
         rank = int(np.linalg.matrix_rank(Cq))
+        underconstrained = self.model.nrestr < self.model.ncoord
+        overconstrained = self.model.nrestr > self.model.ncoord
+        rank_deficient = rank < min(Cq.shape)
+        if overconstrained:
+            classification = "overconstrained"
+        elif underconstrained:
+            classification = "underconstrained"
+        elif rank_deficient:
+            classification = "rank_deficient"
+        else:
+            classification = "fully_constrained"
         return ModelDiagnostics(
             coordinates=self.model.ncoord,
             constraints=self.model.nrestr,
             nominal_degrees_of_freedom=self.model.ncoord - self.model.nrestr,
             rank_degrees_of_freedom=self.model.ncoord - rank,
             jacobian_rank=rank,
-            singular=rank < min(Cq.shape),
+            classification=classification,
+            underconstrained=underconstrained,
+            overconstrained=overconstrained,
+            rank_deficient=rank_deficient,
+            singular=rank_deficient,
         )
 
     def configuration_diagnostics(
@@ -473,6 +505,17 @@ class PlanarMechanism:
         C = constraints(self.model, q, t)
         Cq = jacobian(self.model, q, t)
         rank = int(np.linalg.matrix_rank(Cq))
+        underconstrained = self.model.nrestr < self.model.ncoord
+        overconstrained = self.model.nrestr > self.model.ncoord
+        rank_deficient = rank < min(Cq.shape)
+        if overconstrained:
+            classification = "overconstrained"
+        elif underconstrained:
+            classification = "underconstrained"
+        elif rank_deficient:
+            classification = "rank_deficient"
+        else:
+            classification = "fully_constrained"
         velocity_residual_norm = None
         finite = bool(np.all(np.isfinite(C)) and np.all(np.isfinite(Cq)))
         if v is not None:
@@ -489,32 +532,60 @@ class PlanarMechanism:
             nominal_degrees_of_freedom=self.model.ncoord - self.model.nrestr,
             rank_degrees_of_freedom=self.model.ncoord - rank,
             jacobian_rank=rank,
-            singular=rank < min(Cq.shape),
+            classification=classification,
+            underconstrained=underconstrained,
+            overconstrained=overconstrained,
+            rank_deficient=rank_deficient,
+            singular=rank_deficient,
             finite=finite,
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(
+        self,
+        *,
+        springs: Iterable[Spring] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Return a JSON-ready mechanism export payload."""
         from .export import mechanism_to_dict
 
-        return mechanism_to_dict(self)
+        return mechanism_to_dict(self, springs=springs, metadata=metadata)
 
-    def to_json(self, path: str | Path, *, indent: int = 2) -> Path:
+    def to_json(
+        self,
+        path: str | Path,
+        *,
+        indent: int = 2,
+        springs: Iterable[Spring] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Path:
         """Write a mechanism export JSON file and return its path."""
         from .export import mechanism_to_json
 
-        return mechanism_to_json(self, path, indent=indent)
+        return mechanism_to_json(
+            self,
+            path,
+            indent=indent,
+            springs=springs,
+            metadata=metadata,
+        )
 
     def result_to_dict(
         self,
         result: KinematicResult | DynamicsResult,
         *,
         include_diagnostics: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return a JSON-ready result export payload."""
         from .export import result_to_dict
 
-        return result_to_dict(self, result, include_diagnostics=include_diagnostics)
+        return result_to_dict(
+            self,
+            result,
+            include_diagnostics=include_diagnostics,
+            metadata=metadata,
+        )
 
     def result_to_json(
         self,
@@ -523,6 +594,7 @@ class PlanarMechanism:
         *,
         indent: int = 2,
         include_diagnostics: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> Path:
         """Write a result export JSON file and return its path."""
         from .export import result_to_json
@@ -533,6 +605,7 @@ class PlanarMechanism:
             path,
             indent=indent,
             include_diagnostics=include_diagnostics,
+            metadata=metadata,
         )
 
     def result_to_csv(self, result: KinematicResult | DynamicsResult, path: str | Path) -> Path:
@@ -540,6 +613,59 @@ class PlanarMechanism:
         from .export import result_to_csv
 
         return result_to_csv(self, result, path)
+
+    def point_trace_to_dict(
+        self,
+        result: KinematicResult | DynamicsResult,
+        body: int | BodyHandle,
+        point: ArrayLike2 = (0.0, 0.0),
+        *,
+        name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return a JSON-ready trace for a body-local point."""
+        from .export import point_trace_to_dict
+
+        return point_trace_to_dict(self, result, body, point, name=name, metadata=metadata)
+
+    def point_trace_to_json(
+        self,
+        result: KinematicResult | DynamicsResult,
+        body: int | BodyHandle,
+        point: ArrayLike2,
+        path: str | Path,
+        *,
+        name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        indent: int = 2,
+    ) -> Path:
+        """Write a body-local point trace as JSON."""
+        from .export import point_trace_to_json
+
+        return point_trace_to_json(
+            self,
+            result,
+            body,
+            point,
+            path,
+            name=name,
+            metadata=metadata,
+            indent=indent,
+        )
+
+    def point_trace_to_csv(
+        self,
+        result: KinematicResult | DynamicsResult,
+        body: int | BodyHandle,
+        point: ArrayLike2,
+        path: str | Path,
+        *,
+        name: str | None = None,
+    ) -> Path:
+        """Write a body-local point trace as an SI-unit CSV."""
+        from .export import point_trace_to_csv
+
+        return point_trace_to_csv(self, result, body, point, path, name=name)
 
     def solve_kinematics(
         self,
@@ -569,7 +695,7 @@ class PlanarMechanism:
         velocity_tol = _as_finite_scalar(velocity_tol, "velocity_tol")
         if velocity_tol <= 0.0:
             raise ValueError("velocity_tol must be positive")
-        self._ensure_centroidal_dynamics()
+        ensure_centroidal_dynamics(self.model)
         q0 = self.solve_position(
             _as_state(q0, "q0", self.model.ncoord),
             float(t[0]),
@@ -644,19 +770,6 @@ class PlanarMechanism:
             raise ValueError("result.v must contain only finite values")
         if hasattr(result, "a") and not np.all(np.isfinite(result.a)):
             raise ValueError("result.a must contain only finite values")
-
-    def _ensure_centroidal_dynamics(self) -> None:
-        from ..errors import MechanismSolveError
-
-        for index, body in enumerate(self.model.bodies):
-            if np.linalg.norm(body.rG, ord=np.inf) > 0.0:
-                raise MechanismSolveError(
-                    "Dynamics currently requires each body reference point to "
-                    "coincide with its center of mass. "
-                    f"Body {index} ({body.name!r}) has center_of_mass={body.rG}."
-                )
-
-
 def _as_vector(value: ArrayLike2, name: str, length: int) -> np.ndarray:
     arr = np.asarray(value, dtype=float)
     if arr.shape != (length,):

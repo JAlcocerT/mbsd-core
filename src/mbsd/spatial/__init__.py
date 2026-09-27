@@ -6,21 +6,35 @@ stabilized.
 """
 
 from .kinematics import (
-    SphericalJoint3D,
+    compose_pose,
+    inverse_pose,
     max_spatial_residual,
     point_position,
+    spherical_joint_descriptor_residual,
     spherical_joint_residual,
 )
-from .vocabulary import Frame3D, Pose3D, Quaternion, SpatialBody, SpatialModel
+from .vocabulary import (
+    FixedJoint3D,
+    Frame3D,
+    Pose3D,
+    Quaternion,
+    SpatialBody,
+    SpatialModel,
+    SphericalJoint3D,
+)
 
 __all__ = [
+    "FixedJoint3D",
     "Frame3D",
     "Pose3D",
     "Quaternion",
     "SphericalJoint3D",
     "SpatialBody",
     "SpatialModel",
+    "compose_pose",
+    "inverse_pose",
     "max_spatial_residual",
     "point_position",
+    "spherical_joint_descriptor_residual",
     "spherical_joint_residual",
 ]
