@@ -331,6 +331,17 @@ def test_resolved_frame_and_fixed_joint_residuals():
     np.testing.assert_allclose(resolved.translation, [1.0, 3.0, 0.0], atol=1e-12)
     np.testing.assert_allclose(fixed_joint_descriptor_residual(joint, [body_pose]), 0.0)
     np.testing.assert_allclose(joint.residual([body_pose]), 0.0)
+    assert np.linalg.matrix_rank(joint_residual_jacobian(joint, [body_pose])) == 6
+
+    translated = Pose3D(
+        translation=body_pose.translation + np.array([1e-4, 0.0, 0.0]),
+        rotation=body_pose.rotation,
+    )
+    np.testing.assert_allclose(
+        joint.residual([translated]),
+        [-1e-4, 0.0, 0.0, 0.0, 0.0, 0.0],
+        atol=1e-12,
+    )
 
 
 def test_spherical_joint_residual_uses_canonical_vocabulary_descriptor():
