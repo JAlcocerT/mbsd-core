@@ -112,6 +112,40 @@ def fixed_joint_descriptor_residual(
     return np.concatenate((frame_i.translation - frame_j.translation, 2.0 * vector))
 
 
+def joint_residual_jacobian(
+    joint: SphericalJoint3D | FixedJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+    *,
+    step: float = 1e-7,
+) -> np.ndarray:
+    """Return a central-difference residual Jacobian over world pose increments.
+
+    Each body contributes ``[dx, dy, dz, dRx, dRy, dRz]`` columns. Rotation
+    increments are active, world-expressed, and applied before the body pose.
+    """
+    if not isinstance(joint, (SphericalJoint3D, FixedJoint3D)):
+        raise TypeError("joint must be a SphericalJoint3D or FixedJoint3D")
+    if not isinstance(poses, (list, tuple)) or not all(
+        isinstance(pose, Pose3D) for pose in poses
+    ):
+        raise TypeError("poses must be a list or tuple of Pose3D values")
+    step = float(step)
+    if not np.isfinite(step) or step <= 0.0:
+        raise ValueError("step must be a positive finite scalar")
+    residual = joint.residual(poses)
+    result = np.zeros((residual.size, 6 * len(poses)))
+    for body_index in range(len(poses)):
+        for coordinate in range(6):
+            plus = list(poses)
+            minus = list(poses)
+            plus[body_index] = _perturb_pose(poses[body_index], coordinate, step)
+            minus[body_index] = _perturb_pose(poses[body_index], coordinate, -step)
+            result[:, 6 * body_index + coordinate] = (
+                joint.residual(plus) - joint.residual(minus)
+            ) / (2.0 * step)
+    return result
+
+
 def max_spatial_residual(residuals: list[np.ndarray] | tuple[np.ndarray, ...]) -> float:
     """Return the maximum infinity-norm residual over spatial residual vectors."""
     if not residuals:
@@ -150,3 +184,14 @@ def _joint_frame_pose(
     poses: list[Pose3D] | tuple[Pose3D, ...],
 ) -> Pose3D:
     return frame if body is None else compose_pose(_body_pose(body, poses), frame)
+
+
+def _perturb_pose(pose: Pose3D, coordinate: int, amount: float) -> Pose3D:
+    if coordinate < 3:
+        translation = np.array(pose.translation, copy=True)
+        translation[coordinate] += amount
+        return Pose3D(translation, pose.rotation)
+    axis = np.zeros(3)
+    axis[coordinate - 3] = 1.0
+    increment = Quaternion.from_axis_angle(axis, amount)
+    return Pose3D(pose.translation, increment.compose(pose.rotation))

@@ -110,11 +110,16 @@ its point is expressed in world coordinates.
 ## Experimental Spatial Kinematics
 
 MBSD `0.7.0` adds point transforms and velocities, pose composition and
-inversion, frame-pose resolution, and spherical/fixed-joint residuals. Angular
-velocity is world-expressed for `point_velocity()` and
-`quaternion_rate_world()`. These helpers evaluate supplied poses; they do not
-provide a general spatial position, velocity, or acceleration solver. The
-namespace remains experimental.
+inversion, frame-pose resolution, spherical/fixed-joint residuals, and
+finite-difference residual Jacobians. Angular velocity and Jacobian rotation
+increments are world-expressed. Spatial schema v2 advertises these capabilities
+and explicitly reports that no general spatial solver or dynamics is available.
+These helpers evaluate supplied poses; they do not provide a general spatial
+position, velocity, or acceleration solver. The namespace remains experimental.
+
+Planar dynamics results record the integration method, tolerances, stabilization
+and projection settings, package version, and underconstraint policy in their
+`provenance` mapping and result JSON export.
 
 ## Examples
 

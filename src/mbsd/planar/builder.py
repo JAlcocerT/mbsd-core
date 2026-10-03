@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
@@ -49,6 +49,7 @@ class DynamicsResult:
     t: np.ndarray
     q: np.ndarray
     v: np.ndarray
+    provenance: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -733,18 +734,35 @@ class PlanarMechanism:
                     f"{np.linalg.norm(velocity_residual, ord=np.inf):.3e} "
                     f"> {velocity_tol:.3e}."
                 )
+        integration_options = dict(kwargs)
+        integration_options.setdefault("velocity_tol", velocity_tol)
         sol = solve_dynamics_scipy(
             self.model,
             q0,
             v0,
             t,
             allow_underconstrained=allow_underconstrained,
-            **kwargs,
+            **integration_options,
         )
         if not sol.success:
             raise MechanismSolveError(f"Dynamic integration failed: {sol.message}")
         q, v, t_out = extract_dynamics_solution(self.model, sol)
-        return DynamicsResult(t=t_out, q=q, v=v)
+        from .. import __version__ as mbsd_version
+
+        provenance = {
+            "mbsd_version": mbsd_version,
+            "solver": "scipy.solve_ivp",
+            "method": integration_options.get("method", "RK45"),
+            "rtol": integration_options.get("rtol", 1e-9),
+            "atol": integration_options.get("atol", 1e-11),
+            "position_tol": integration_options.get("position_tol", 1e-8),
+            "velocity_tol": integration_options["velocity_tol"],
+            "project_position": integration_options.get("project_position", False),
+            "alpha_baumgarte": integration_options.get("alpha_baumgarte", 0.0),
+            "beta_baumgarte": integration_options.get("beta_baumgarte", 0.0),
+            "allow_underconstrained": allow_underconstrained,
+        }
+        return DynamicsResult(t=t_out, q=q, v=v, provenance=provenance)
 
     def _idx(self, body: int | BodyHandle) -> int:
         idx = body.index if isinstance(body, BodyHandle) else int(body)

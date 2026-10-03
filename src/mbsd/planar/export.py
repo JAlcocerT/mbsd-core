@@ -164,6 +164,8 @@ def result_to_dict(
     }
     if hasattr(result, "a"):
         payload["coordinates"]["a"] = _matrix(result.a)
+    else:
+        payload["provenance"] = _metadata(dict(result.provenance))
     if include_diagnostics:
         payload["diagnostics"] = mechanism.diagnostics(result).as_dict()
     return payload

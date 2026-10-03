@@ -363,6 +363,16 @@ class SpatialModel:
             "schema_version": SPATIAL_MODEL_SCHEMA_VERSION,
             "mbsd_version": _package_version(),
             "status": "experimental",
+            "capabilities": {
+                "pose_transforms": True,
+                "point_position": True,
+                "point_velocity": True,
+                "spherical_joint_residual": True,
+                "fixed_joint_residual": True,
+                "joint_residual_jacobian": "finite_difference",
+                "general_spatial_solver": False,
+                "spatial_dynamics": False,
+            },
             "dimension": 3,
             "units": {
                 "length": "m",
@@ -433,6 +443,8 @@ def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]
         raise ValueError(
             f"schema_version {schema_version} conventions missing: {', '.join(missing)}"
         )
+    if schema_version == 2 and not isinstance(payload.get("capabilities"), Mapping):
+        raise ValueError("schema_version 2 capabilities must be a mapping")
     return json.loads(json.dumps(payload))
 
 

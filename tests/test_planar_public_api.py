@@ -110,6 +110,13 @@ def test_mass_spring_dynamics_runs_from_public_api():
     np.testing.assert_allclose(result.q[4, :], 0.0, atol=1e-9)
     np.testing.assert_allclose(result.q[5, :], 0.0, atol=1e-9)
     assert mechanism.max_constraint_residual(result) < 1e-8
+    assert result.provenance["solver"] == "scipy.solve_ivp"
+    assert result.provenance["method"] == "RK45"
+    assert result.provenance["rtol"] == pytest.approx(1e-9)
+    assert result.provenance["project_position"] is False
+    assert result.provenance["allow_underconstrained"] is True
+    exported = mechanism.result_to_dict(result)
+    assert exported["provenance"] == result.provenance
 
 
 def test_undamped_mass_spring_energy_is_reasonably_conserved():

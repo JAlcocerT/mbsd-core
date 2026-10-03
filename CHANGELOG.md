@@ -11,8 +11,13 @@ Week 7 release.
 - Add `max_spatial_residual()` for simple 3D kinematic validation summaries.
 - Add public quaternion composition/inverse, point velocity, world-angular-
   velocity quaternion rate, resolved frame poses, and fixed-joint residuals.
+- Add finite-difference spatial joint-residual Jacobians with explicit
+  world-increment conventions and randomized/near-singular transform checks.
+- Record integration method, tolerances, stabilization, projection, package
+  version, and underconstraint policy in planar dynamics result provenance.
 - Publish spatial-model schema v2 for the clarified frame conventions, retain
-  validated v1 reading, and reject unknown schema versions explicitly.
+  validated v1 reading, explicit capability metadata, and unknown-version
+  rejection.
 - Validate lower-level dynamics state shapes, times, tolerances, and initial
   position/velocity consistency before integration.
 - Give empty planar diagnostics, solves, and exports a clear validation error.

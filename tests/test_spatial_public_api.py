@@ -11,6 +11,7 @@ from mbsd.spatial import (
     FixedJoint3D,
     Frame3D,
     inverse_pose,
+    joint_residual_jacobian,
     max_spatial_residual,
     Pose3D,
     point_position,
@@ -34,6 +35,46 @@ def test_quaternion_axis_angle_rotates_point():
     np.testing.assert_allclose(q.rotate((1.0, 0.0, 0.0)), [0.0, 1.0, 0.0], atol=1e-12)
     np.testing.assert_allclose(
         q.to_rotation_matrix() @ q.to_rotation_matrix().T, np.eye(3), atol=1e-12
+    )
+
+
+def test_randomized_transform_composition_and_inverse_identities():
+    rng = np.random.default_rng(20261003)
+    for _ in range(100):
+        axis_a = rng.normal(size=3)
+        axis_b = rng.normal(size=3)
+        pose_a = Pose3D(
+            rng.normal(size=3),
+            Quaternion.from_axis_angle(axis_a, rng.uniform(-np.pi, np.pi)),
+        )
+        pose_b = Pose3D(
+            rng.normal(size=3),
+            Quaternion.from_axis_angle(axis_b, rng.uniform(-np.pi, np.pi)),
+        )
+        point = rng.normal(size=3)
+        composed = compose_pose(pose_a, pose_b)
+
+        np.testing.assert_allclose(
+            composed.transform_point(point),
+            pose_a.transform_point(pose_b.transform_point(point)),
+            atol=2e-12,
+        )
+        identity = compose_pose(inverse_pose(composed), composed)
+        np.testing.assert_allclose(identity.translation, 0.0, atol=2e-12)
+        np.testing.assert_allclose(identity.rotation.to_rotation_matrix(), np.eye(3), atol=2e-12)
+
+
+@pytest.mark.parametrize("angle", [np.pi - 1e-12, np.pi, np.pi + 1e-12])
+def test_near_pi_quaternions_remain_proper_rotations(angle):
+    quaternion = Quaternion.from_axis_angle((1.0, -2.0, 3.0), angle)
+    matrix = quaternion.to_rotation_matrix()
+
+    np.testing.assert_allclose(matrix @ matrix.T, np.eye(3), atol=2e-12)
+    np.testing.assert_allclose(np.linalg.det(matrix), 1.0, atol=2e-12)
+    np.testing.assert_allclose(
+        quaternion.inverse().compose(quaternion).as_array(),
+        [1, 0, 0, 0],
+        atol=2e-15,
     )
 
 
@@ -88,6 +129,7 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
         "schema_version",
         "mbsd_version",
         "status",
+        "capabilities",
         "dimension",
         "units",
         "conventions",
@@ -100,6 +142,8 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
     assert payload["schema_version"] == 2
     assert payload["mbsd_version"] == mbsd.__version__
     assert payload["status"] == "experimental"
+    assert payload["capabilities"]["joint_residual_jacobian"] == "finite_difference"
+    assert payload["capabilities"]["general_spatial_solver"] is False
     assert payload["units"]["inertia"] == "kg*m^2"
     assert payload["conventions"]["world_frame"] == "right_handed_xyz"
     assert payload["conventions"]["quaternion_order"] == ["w", "x", "y", "z"]
@@ -324,6 +368,29 @@ def test_spherical_joint_residual_supports_world_endpoint():
     residual = joint.residual([Pose3D(translation=(1.0, 2.0, 3.0))])
 
     np.testing.assert_allclose(residual, np.zeros(3), atol=1e-12)
+
+
+def test_spherical_joint_residual_and_jacobian_respond_to_known_perturbation():
+    joint = SphericalJoint3D(
+        "two-body",
+        body_i=0,
+        body_j=1,
+        point_i=(0.0, 1.0, 0.0),
+        point_j=(0.0, 1.0, 0.0),
+    )
+    poses = [Pose3D.identity(), Pose3D.identity()]
+    jacobian = joint_residual_jacobian(joint, poses)
+
+    np.testing.assert_allclose(jacobian[:, :3], np.eye(3), atol=1e-9)
+    np.testing.assert_allclose(jacobian[:, 6:9], -np.eye(3), atol=1e-9)
+    expected_rotation_i = np.array(
+        [[0.0, 0.0, -1.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    )
+    np.testing.assert_allclose(jacobian[:, 3:6], expected_rotation_i, atol=1e-9)
+    np.testing.assert_allclose(jacobian[:, 9:12], -expected_rotation_i, atol=1e-9)
+
+    perturbed = [Pose3D(translation=(1e-4, 0.0, 0.0)), poses[1]]
+    np.testing.assert_allclose(joint.residual(perturbed), [1e-4, 0.0, 0.0])
 
 
 def test_spatial_kinematics_reject_invalid_inputs():
