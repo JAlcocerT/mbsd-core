@@ -59,7 +59,7 @@ print(m.diagnostics(result).as_dict())
 print(result.q[3, -1])  # slider x at final time
 ```
 
-MBSD `0.4.0` includes portable export helpers for downstream applications:
+Since `0.4.0`, MBSD includes portable export helpers for downstream applications:
 
 ```python
 m.to_json("mechanism.json")
@@ -164,8 +164,8 @@ solver kernel that stays close enough to the equations to inspect and modify.
 
 ## Repository Notes
 
-This repository contains the installable framework for the weekly OSS release
-series. The historical workbench still contains course material, generated
+This repository contains the installable public framework. The historical
+workbench still contains course material, generated
 plots, animations, synthesis experiments, fluid mechanics work, CAD rendering,
 and a 3D MBSD kernel. Release branches keep only the public package surface
 under:
@@ -184,7 +184,7 @@ package repository.
 
 ## Export Contract
 
-The `0.4.0` handoff schemas are:
+The handoff schemas available since `0.4.0` are:
 
 - `mbsd.planar.mechanism`: bodies, joints, drives, gravity, explicit
   spring-damper descriptors, units, conventions, and caller metadata.

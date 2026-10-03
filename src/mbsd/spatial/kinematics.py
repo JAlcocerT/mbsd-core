@@ -118,10 +118,12 @@ def joint_residual_jacobian(
     *,
     step: float = 1e-7,
 ) -> np.ndarray:
-    """Return a central-difference residual Jacobian over world pose increments.
+    """Return a joint residual Jacobian over world pose increments.
 
     Each body contributes ``[dx, dy, dz, dRx, dRy, dRz]`` columns. Rotation
     increments are active, world-expressed, and applied before the body pose.
+    Spherical-joint blocks are analytic; fixed joints currently use carefully
+    validated central differences.
     """
     if not isinstance(joint, (SphericalJoint3D, FixedJoint3D)):
         raise TypeError("joint must be a SphericalJoint3D or FixedJoint3D")
@@ -132,6 +134,8 @@ def joint_residual_jacobian(
     step = float(step)
     if not np.isfinite(step) or step <= 0.0:
         raise ValueError("step must be a positive finite scalar")
+    if isinstance(joint, SphericalJoint3D):
+        return _spherical_joint_residual_jacobian(joint, poses)
     residual = joint.residual(poses)
     result = np.zeros((residual.size, 6 * len(poses)))
     for body_index in range(len(poses)):
@@ -144,6 +148,30 @@ def joint_residual_jacobian(
                 joint.residual(plus) - joint.residual(minus)
             ) / (2.0 * step)
     return result
+
+
+def _spherical_joint_residual_jacobian(
+    joint: SphericalJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+) -> np.ndarray:
+    result = np.zeros((3, 6 * len(poses)))
+    for sign, body, point in (
+        (1.0, joint.body_i, joint.point_i),
+        (-1.0, joint.body_j, joint.point_j),
+    ):
+        if body is None:
+            continue
+        pose = _body_pose(body, poses)
+        offset_world = pose.rotation.rotate(point)
+        start = 6 * body
+        result[:, start : start + 3] += sign * np.eye(3)
+        result[:, start + 3 : start + 6] += -sign * _skew(offset_world)
+    return result
+
+
+def _skew(vector: np.ndarray) -> np.ndarray:
+    x, y, z = vector
+    return np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
 
 
 def max_spatial_residual(residuals: list[np.ndarray] | tuple[np.ndarray, ...]) -> float:

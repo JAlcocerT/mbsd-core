@@ -369,7 +369,10 @@ class SpatialModel:
                 "point_velocity": True,
                 "spherical_joint_residual": True,
                 "fixed_joint_residual": True,
-                "joint_residual_jacobian": "finite_difference",
+                "joint_residual_jacobian": {
+                    "spherical": "analytic",
+                    "fixed": "finite_difference",
+                },
                 "general_spatial_solver": False,
                 "spatial_dynamics": False,
             },

@@ -2,8 +2,6 @@
 
 ## v0.7.0 - Spatial Kinematics Preview
 
-Week 7 release.
-
 - Add experimental spatial point-position, pose-composition, and pose-inverse
   helpers.
 - Add point-coincidence residual evaluation to the canonical vocabulary
@@ -11,8 +9,8 @@ Week 7 release.
 - Add `max_spatial_residual()` for simple 3D kinematic validation summaries.
 - Add public quaternion composition/inverse, point velocity, world-angular-
   velocity quaternion rate, resolved frame poses, and fixed-joint residuals.
-- Add finite-difference spatial joint-residual Jacobians with explicit
-  world-increment conventions and randomized/near-singular transform checks.
+- Add analytic spherical-joint and finite-difference fixed-joint residual
+  Jacobians with explicit world-increment conventions and numerical checks.
 - Record integration method, tolerances, stabilization, projection, package
   version, and underconstraint policy in planar dynamics result provenance.
 - Publish spatial-model schema v2 for the clarified frame conventions, retain
@@ -27,11 +25,9 @@ Week 7 release.
 
 ## v0.6.0 - Solver and Contract Hardening
 
-Week 6 release.
-
 - Add `ConfigurationDiagnostics` for single-state residual and Jacobian health
   checks.
-- Add `PlanarMechanism.configuration_diagnostics(q, t, v=None)` for PWA-style
+- Add `PlanarMechanism.configuration_diagnostics(q, t, v=None)` for downstream
   validation panels and solver debugging.
 - Include velocity-level residuals when a velocity vector is supplied.
 - Classify fully constrained, underconstrained, overconstrained, and
@@ -46,8 +42,6 @@ Week 6 release.
 
 ## v0.5.0 - Experimental 3D Vocabulary
 
-Week 5 release.
-
 - Add experimental `mbsd.spatial` namespace.
 - Add posed `SpatialBody` objects and world- or body-local `Frame3D` objects.
 - Add data-only spherical and fixed joint sketches with explicit world-body
@@ -58,8 +52,6 @@ Week 5 release.
   dynamics are claimed yet.
 
 ## v0.4.0 - Export Schema
-
-Week 4 release.
 
 - Add JSON-ready planar mechanism exports.
 - Add JSON-ready planar result exports with diagnostics.
@@ -74,10 +66,10 @@ Week 4 release.
   handoffs.
 - Reject non-finite and nonserializable export values with clear errors.
 - Expose the installed package version through `mbsd.__version__`.
-- Keep browser/PWA implementation code outside `mbsd-core`; the core exposes
-  portable schemas for downstream apps.
+- Keep application UI code outside `mbsd-core`; the core exposes portable
+  schemas for downstream consumers.
 
-## v0.3.0 - Week 3 Synthesis Preview
+## v0.3.0 - Synthesis Preview
 
 Prepared release candidate.
 
@@ -100,7 +92,7 @@ Prepared release candidate.
   invalid geometry, and affine-fit behavior.
 - Keep top-level `mbsd` exports unchanged.
 
-## v0.2.0 - Week 2 Validation
+## v0.2.0 - Validation
 
 Prepared release candidate.
 
@@ -114,7 +106,7 @@ Prepared release candidate.
   `MechanismSolveError`.
 - Keep core runtime dependencies limited to NumPy and SciPy.
 
-## v0.1.0 - Week 1 Core
+## v0.1.0 - Initial Core
 
 Initial public core release candidate.
 

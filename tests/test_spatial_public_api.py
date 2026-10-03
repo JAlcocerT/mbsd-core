@@ -142,7 +142,10 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
     assert payload["schema_version"] == 2
     assert payload["mbsd_version"] == mbsd.__version__
     assert payload["status"] == "experimental"
-    assert payload["capabilities"]["joint_residual_jacobian"] == "finite_difference"
+    assert payload["capabilities"]["joint_residual_jacobian"] == {
+        "spherical": "analytic",
+        "fixed": "finite_difference",
+    }
     assert payload["capabilities"]["general_spatial_solver"] is False
     assert payload["units"]["inertia"] == "kg*m^2"
     assert payload["conventions"]["world_frame"] == "right_handed_xyz"
@@ -402,6 +405,42 @@ def test_spherical_joint_residual_and_jacobian_respond_to_known_perturbation():
 
     perturbed = [Pose3D(translation=(1e-4, 0.0, 0.0)), poses[1]]
     np.testing.assert_allclose(joint.residual(perturbed), [1e-4, 0.0, 0.0])
+
+
+def test_analytic_spherical_jacobian_matches_independent_central_difference():
+    joint = SphericalJoint3D("rotated", 0, 1, (0.3, -0.2, 0.4), (-0.1, 0.5, 0.2))
+    poses = [
+        Pose3D((0.2, -0.4, 0.1), Quaternion.from_axis_angle((1, 2, 3), 0.7)),
+        Pose3D((-0.3, 0.1, 0.6), Quaternion.from_axis_angle((-2, 1, 1), -0.4)),
+    ]
+    analytic = joint_residual_jacobian(joint, poses)
+    numeric = np.zeros_like(analytic)
+    step = 1e-7
+    for body_index, pose in enumerate(poses):
+        for coordinate in range(6):
+            plus = list(poses)
+            minus = list(poses)
+            if coordinate < 3:
+                delta = np.zeros(3)
+                delta[coordinate] = step
+                plus[body_index] = Pose3D(pose.translation + delta, pose.rotation)
+                minus[body_index] = Pose3D(pose.translation - delta, pose.rotation)
+            else:
+                axis = np.zeros(3)
+                axis[coordinate - 3] = 1.0
+                positive = Quaternion.from_axis_angle(axis, step)
+                negative = Quaternion.from_axis_angle(axis, -step)
+                plus[body_index] = Pose3D(
+                    pose.translation, positive.compose(pose.rotation)
+                )
+                minus[body_index] = Pose3D(
+                    pose.translation, negative.compose(pose.rotation)
+                )
+            numeric[:, 6 * body_index + coordinate] = (
+                joint.residual(plus) - joint.residual(minus)
+            ) / (2.0 * step)
+
+    np.testing.assert_allclose(analytic, numeric, atol=2e-9)
 
 
 def test_spatial_kinematics_reject_invalid_inputs():

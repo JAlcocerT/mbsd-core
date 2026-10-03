@@ -3,7 +3,10 @@
   "schema_version": 2,
   "capabilities": {
     "general_spatial_solver": false,
-    "joint_residual_jacobian": "finite_difference"
+    "joint_residual_jacobian": {
+      "spherical": "analytic",
+      "fixed": "finite_difference"
+    }
   },
   "conventions": {
     "body_pose": "body_to_world",
