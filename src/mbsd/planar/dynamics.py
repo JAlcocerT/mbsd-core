@@ -14,7 +14,7 @@ from scipy.integrate import solve_ivp
 
 from .constraints import constraints
 from .jacobians import jacobian
-from .derivatives import dt_jacobian, dtdt_constraints
+from .derivatives import dt_constraints, dt_jacobian, dtdt_constraints
 from .solver import solve_position, solve_velocity, solve_acceleration_with_lagrange
 
 from .forces import (
@@ -301,7 +301,8 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
                          rtol=1e-9, atol=1e-11, project_position=False,
                          contacts=None, surface_contacts=None,
                          alpha_baumgarte=0.0, beta_baumgarte=0.0,
-                         allow_underconstrained=False):
+                         allow_underconstrained=False,
+                         position_tol=1e-8, velocity_tol=1e-8):
     """Solve dynamics using scipy.integrate.solve_ivp.
 
     Integrates the constrained dynamics equations:
@@ -333,21 +334,68 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
             for tuning guidance and side-by-side drift comparison.
         allow_underconstrained: allow position projection to use the same
             minimum-norm underconstrained solve permitted by the public facade.
+        position_tol, velocity_tol: positive tolerances used to reject an
+            inconsistent initial position or velocity before integration.
 
     Returns:
         sol: scipy OdeResult object with attributes t, y (solution at times)
     """
-    ensure_centroidal_dynamics(mbody)
-    if mbody.nrestr < mbody.ncoord and not allow_underconstrained:
-        from ..errors import MechanismSolveError
+    from ..errors import MechanismSolveError
 
+    ensure_centroidal_dynamics(mbody)
+    q0 = np.asarray(q0, dtype=float)
+    v0 = np.asarray(v0, dtype=float)
+    t_eval = np.asarray(t_eval, dtype=float)
+    if q0.shape != (mbody.ncoord,) or not np.all(np.isfinite(q0)):
+        raise MechanismSolveError(
+            f"q0 must be a finite vector with shape ({mbody.ncoord},)."
+        )
+    if v0.shape != (mbody.ncoord,) or not np.all(np.isfinite(v0)):
+        raise MechanismSolveError(
+            f"v0 must be a finite vector with shape ({mbody.ncoord},)."
+        )
+    if t_eval.ndim != 1 or t_eval.size == 0 or not np.all(np.isfinite(t_eval)):
+        raise MechanismSolveError("t_eval must be a non-empty finite one-dimensional array.")
+    if t_eval.size > 1 and np.any(np.diff(t_eval) <= 0.0):
+        raise MechanismSolveError("t_eval must be strictly increasing.")
+    for name, value in (
+        ("position_tol", position_tol),
+        ("velocity_tol", velocity_tol),
+        ("rtol", rtol),
+        ("atol", atol),
+    ):
+        if not np.isscalar(value) or not np.isfinite(value) or value <= 0.0:
+            raise MechanismSolveError(f"{name} must be a positive finite scalar.")
+
+    t0 = float(t_eval[0])
+    position_residual = constraints(mbody, q0, t0)
+    position_norm = (
+        float(np.linalg.norm(position_residual, ord=np.inf))
+        if position_residual.size
+        else 0.0
+    )
+    if position_norm > position_tol:
+        raise MechanismSolveError(
+            "Initial position violates position-level constraints: "
+            f"{position_norm:.3e} > {position_tol:.3e}."
+        )
+    velocity_residual = jacobian(mbody, q0, t0) @ v0 + dt_constraints(mbody, q0, t0)
+    velocity_norm = (
+        float(np.linalg.norm(velocity_residual, ord=np.inf))
+        if velocity_residual.size
+        else 0.0
+    )
+    if velocity_norm > velocity_tol:
+        raise MechanismSolveError(
+            "Initial velocity violates velocity-level constraints: "
+            f"{velocity_norm:.3e} > {velocity_tol:.3e}."
+        )
+    if mbody.nrestr < mbody.ncoord and not allow_underconstrained:
         raise MechanismSolveError(
             "Underconstrained dynamics requires allow_underconstrained=True: "
             f"{mbody.nrestr} constraints for {mbody.ncoord} coordinates."
         )
     if mbody.nrestr > mbody.ncoord:
-        from ..errors import MechanismSolveError
-
         raise MechanismSolveError(
             "Overconstrained dynamics model: "
             f"{mbody.nrestr} constraints for {mbody.ncoord} coordinates."

@@ -13,6 +13,9 @@ import numpy as np
 
 
 ArrayLike3 = Iterable[float]
+SPATIAL_MODEL_SCHEMA = "mbsd.spatial.model"
+SPATIAL_MODEL_SCHEMA_VERSION = 2
+SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS = (1, 2)
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,25 @@ class Quaternion:
 
     def rotate(self, vector: ArrayLike3) -> np.ndarray:
         return self.to_rotation_matrix() @ _as_vector(vector, "vector", 3)
+
+    def compose(self, other: "Quaternion") -> "Quaternion":
+        """Compose active rotations, applying ``other`` before ``self``."""
+        if not isinstance(other, Quaternion):
+            raise TypeError("other must be a Quaternion")
+        aw, ax, ay, az = self.as_array()
+        bw, bx, by, bz = other.as_array()
+        return Quaternion(
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+        )
+
+    def conjugate(self) -> "Quaternion":
+        return Quaternion(self.w, -self.x, -self.y, -self.z)
+
+    def inverse(self) -> "Quaternion":
+        return self.conjugate()
 
     def as_dict(self) -> dict[str, float]:
         normalized = self.normalized()
@@ -252,6 +274,12 @@ class FixedJoint3D:
             payload["index"] = index
         return payload
 
+    def residual(self, poses: list[Pose3D] | tuple[Pose3D, ...]) -> np.ndarray:
+        """Return translation and rotation-vector residuals for the joint frames."""
+        from .kinematics import fixed_joint_descriptor_residual
+
+        return fixed_joint_descriptor_residual(self, poses)
+
 
 SpatialJoint3D = SphericalJoint3D | FixedJoint3D
 
@@ -331,8 +359,8 @@ class SpatialModel:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "schema": "mbsd.spatial.model",
-            "schema_version": 1,
+            "schema": SPATIAL_MODEL_SCHEMA,
+            "schema_version": SPATIAL_MODEL_SCHEMA_VERSION,
             "mbsd_version": _package_version(),
             "status": "experimental",
             "dimension": 3,
@@ -370,6 +398,48 @@ class SpatialModel:
     def _validate_joint_references(self, joint: SpatialJoint3D) -> None:
         _validate_model_body_reference(joint.body_i, len(self.bodies), "joint body_i")
         _validate_model_body_reference(joint.body_j, len(self.bodies), "joint body_j")
+
+
+def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate a supported spatial-model export and return a detached copy."""
+    if not isinstance(payload, Mapping):
+        raise TypeError("spatial model payload must be a mapping")
+    if payload.get("schema") != SPATIAL_MODEL_SCHEMA:
+        raise ValueError(f"schema must be {SPATIAL_MODEL_SCHEMA!r}")
+    schema_version = payload.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version not in SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS
+    ):
+        supported = ", ".join(str(value) for value in SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS)
+        raise ValueError(
+            f"unsupported spatial model schema_version {schema_version!r}; "
+            f"supported versions are {supported}"
+        )
+    for name in ("bodies", "frames", "joints"):
+        if not isinstance(payload.get(name), list):
+            raise ValueError(f"{name} must be a list")
+    conventions = payload.get("conventions")
+    if not isinstance(conventions, Mapping):
+        raise ValueError("conventions must be a mapping")
+    required = (
+        ("pose_translation",)
+        if schema_version == 1
+        else ("body_pose", "frame_pose", "fixed_joint_frames")
+    )
+    missing = [name for name in required if name not in conventions]
+    if missing:
+        raise ValueError(
+            f"schema_version {schema_version} conventions missing: {', '.join(missing)}"
+        )
+    return json.loads(json.dumps(payload))
+
+
+def load_spatial_model_payload(path: str | Path) -> dict[str, Any]:
+    """Load and validate a supported spatial-model JSON export."""
+    path = Path(path)
+    return validate_spatial_model_payload(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _as_vector(value: ArrayLike3, name: str, length: int) -> np.ndarray:

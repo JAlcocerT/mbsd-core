@@ -85,7 +85,8 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
 - Versioned JSON and CSV mechanism, result, and body-point export helpers.
 - Experimental `mbsd.spatial` vocabulary for portable 3D model descriptions.
 - Per-configuration solver diagnostics with explicit model classification.
-- Experimental spatial point kinematics on the local `v0.7.0-dev` branch.
+- Experimental spatial transforms, point velocities, and joint residuals in
+  `0.7.0`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
@@ -108,10 +109,12 @@ its point is expressed in world coordinates.
 
 ## Experimental Spatial Kinematics
 
-The local `v0.7.0-dev` branch adds point transforms, pose composition and
-inversion, and spherical-joint point-coincidence residuals. These helpers
-evaluate supplied poses; they do not provide a general spatial position,
-velocity, or acceleration solver. The namespace remains experimental.
+MBSD `0.7.0` adds point transforms and velocities, pose composition and
+inversion, frame-pose resolution, and spherical/fixed-joint residuals. Angular
+velocity is world-expressed for `point_velocity()` and
+`quaternion_rate_world()`. These helpers evaluate supplied poses; they do not
+provide a general spatial position, velocity, or acceleration solver. The
+namespace remains experimental.
 
 ## Examples
 

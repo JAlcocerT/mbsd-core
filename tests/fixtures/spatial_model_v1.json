@@ -1,0 +1,12 @@
+{
+  "schema": "mbsd.spatial.model",
+  "schema_version": 1,
+  "conventions": {
+    "pose_translation": "world_xyz",
+    "rotation": "active_body_to_world",
+    "quaternion_order": ["w", "x", "y", "z"]
+  },
+  "bodies": [],
+  "frames": [],
+  "joints": []
+}

@@ -177,6 +177,10 @@ class PlanarMechanism:
         self.model = MBody()
         self.model.g = _as_vector(gravity, "gravity", 2)
 
+    def _ensure_nonempty_model(self) -> None:
+        if not self.model.bodies:
+            raise ValueError("mechanism must contain at least one body")
+
     @property
     def ncoord(self) -> int:
         return self.model.ncoord
@@ -383,6 +387,7 @@ class PlanarMechanism:
         t: float = 0.0,
         allow_underconstrained: bool = False,
     ) -> np.ndarray:
+        self._ensure_nonempty_model()
         if q0 is None:
             q0 = np.zeros(self.model.ncoord)
         return solve_position(
@@ -398,6 +403,7 @@ class PlanarMechanism:
         t: float = 0.0,
         allow_underconstrained: bool = False,
     ) -> np.ndarray:
+        self._ensure_nonempty_model()
         return solve_velocity(
             self.model,
             _as_state(q, "q", self.model.ncoord),
@@ -464,6 +470,7 @@ class PlanarMechanism:
 
     def model_diagnostics(self, q: np.ndarray | None = None, t: float = 0.0) -> ModelDiagnostics:
         """Return coordinate, constraint, DOF, and Jacobian-rank diagnostics."""
+        self._ensure_nonempty_model()
         if q is None:
             q = np.zeros(self.model.ncoord)
         q = _as_state(q, "q", self.model.ncoord)
@@ -500,6 +507,7 @@ class PlanarMechanism:
         v: np.ndarray | None = None,
     ) -> ConfigurationDiagnostics:
         """Return residual and Jacobian health metrics for one configuration."""
+        self._ensure_nonempty_model()
         t = _as_finite_scalar(t, "t")
         q = _as_state(q, "q", self.model.ncoord)
         C = constraints(self.model, q, t)
@@ -547,6 +555,7 @@ class PlanarMechanism:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return a JSON-ready mechanism export payload."""
+        self._ensure_nonempty_model()
         from .export import mechanism_to_dict
 
         return mechanism_to_dict(self, springs=springs, metadata=metadata)
@@ -560,6 +569,7 @@ class PlanarMechanism:
         metadata: dict[str, Any] | None = None,
     ) -> Path:
         """Write a mechanism export JSON file and return its path."""
+        self._ensure_nonempty_model()
         from .export import mechanism_to_json
 
         return mechanism_to_json(
@@ -674,6 +684,7 @@ class PlanarMechanism:
         verbose: bool = False,
     ) -> KinematicResult:
         """Run position, velocity, and acceleration solves over ``t``."""
+        self._ensure_nonempty_model()
         t = _as_time_array(t)
         q_initial = self.solve_position(q0, float(t[0]))
         q, v, a = run_kinematic_simulation(self.model, q_initial, t, verbose=verbose)
@@ -689,6 +700,7 @@ class PlanarMechanism:
         **kwargs,
     ) -> DynamicsResult:
         """Run forward dynamics with the scipy-based constrained integrator."""
+        self._ensure_nonempty_model()
         from ..errors import MechanismSolveError
 
         t = _as_time_array(t)

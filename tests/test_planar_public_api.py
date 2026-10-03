@@ -432,6 +432,61 @@ def test_lower_level_rk45_preserves_free_body_velocity():
     np.testing.assert_allclose(reactions, 0.0, atol=1e-10)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("q0", np.zeros(2), "q0 must be a finite vector"),
+        ("v0", np.array([0.0, np.nan, 0.0]), "v0 must be a finite vector"),
+        ("t", np.array([]), "t_eval must be a non-empty"),
+        ("t", np.array([0.1, 0.0]), "t_eval must be strictly increasing"),
+        ("position_tol", 0.0, "position_tol must be a positive"),
+        ("velocity_tol", np.inf, "velocity_tol must be a positive"),
+    ],
+)
+def test_lower_level_dynamics_validates_inputs(field, value, message):
+    model = MBody()
+    model.g = np.zeros(2)
+    model.bodies.append(Body("ground"))
+    kwargs = {
+        "q0": np.zeros(model.ncoord),
+        "v0": np.zeros(model.ncoord),
+        "t_eval": np.array([0.0, 0.1]),
+    }
+    if field == "t":
+        field = "t_eval"
+    kwargs[field] = value
+
+    with pytest.raises(MechanismSolveError, match=message):
+        solve_dynamics_scipy(model, **kwargs)
+
+
+def test_lower_level_dynamics_rejects_inconsistent_initial_state():
+    model = MBody()
+    model.g = np.zeros(2)
+    model.bodies.append(Body("ground"))
+    t = np.array([0.0, 0.1])
+
+    with pytest.raises(MechanismSolveError, match="Initial position violates"):
+        solve_dynamics_scipy(model, np.array([0.1, 0.0, 0.0]), np.zeros(3), t)
+    with pytest.raises(MechanismSolveError, match="Initial velocity violates"):
+        solve_dynamics_scipy(model, np.zeros(3), np.array([0.1, 0.0, 0.0]), t)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda mechanism: mechanism.model_diagnostics(),
+        lambda mechanism: mechanism.configuration_diagnostics(np.array([])),
+        lambda mechanism: mechanism.solve_position(),
+        lambda mechanism: mechanism.solve_kinematics(np.array([0.0, 0.1])),
+        lambda mechanism: mechanism.to_dict(),
+    ],
+)
+def test_empty_planar_mechanism_has_clear_public_error(operation):
+    with pytest.raises(ValueError, match="at least one body"):
+        operation(Mechanism.planar())
+
+
 @pytest.mark.parametrize("entry_point", ["scipy", "rk45", "inverse"])
 def test_lower_level_dynamics_reject_offset_center_of_mass(entry_point):
     model = MBody()

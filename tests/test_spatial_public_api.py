@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -6,18 +7,24 @@ import pytest
 import mbsd
 from mbsd.spatial import (
     compose_pose,
+    fixed_joint_descriptor_residual,
     FixedJoint3D,
     Frame3D,
     inverse_pose,
     max_spatial_residual,
     Pose3D,
     point_position,
+    point_velocity,
     Quaternion,
+    quaternion_rate_world,
+    resolve_frame_pose,
     spherical_joint_descriptor_residual,
     spherical_joint_residual,
     SpatialBody,
     SpatialModel,
     SphericalJoint3D,
+    load_spatial_model_payload,
+    validate_spatial_model_payload,
 )
 
 
@@ -90,7 +97,7 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
         "joints",
     } <= payload.keys()
     assert payload["schema"] == "mbsd.spatial.model"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["mbsd_version"] == mbsd.__version__
     assert payload["status"] == "experimental"
     assert payload["units"]["inertia"] == "kg*m^2"
@@ -109,6 +116,23 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
 
     path = model.to_json(tmp_path / "spatial-model.json")
     assert json.loads(path.read_text(encoding="utf-8")) == payload
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_spatial_schema_golden_payloads_remain_readable(version):
+    fixture = Path(__file__).parent / "fixtures" / f"spatial_model_v{version}.json"
+
+    payload = load_spatial_model_payload(fixture)
+
+    assert payload["schema_version"] == version
+
+
+def test_spatial_schema_rejects_unknown_versions():
+    payload = SpatialModel().as_dict()
+    payload["schema_version"] = 99
+
+    with pytest.raises(ValueError, match="unsupported spatial model schema_version 99"):
+        validate_spatial_model_payload(payload)
 
 
 def test_export_consumer_reconstructs_body_local_frame_world_position():
@@ -214,6 +238,55 @@ def test_spatial_point_position_pose_composition_and_inverse():
     identity = compose_pose(inverse_pose(world), world)
     np.testing.assert_allclose(identity.translation, np.zeros(3), atol=1e-12)
     np.testing.assert_allclose(identity.rotation.as_array(), [1.0, 0.0, 0.0, 0.0], atol=1e-12)
+
+
+def test_spatial_point_velocity_and_quaternion_rate_match_finite_difference():
+    pose = Pose3D(
+        translation=(1.0, 2.0, 3.0),
+        rotation=Quaternion.from_axis_angle((0.0, 0.0, 1.0), 0.4),
+    )
+    local_point = np.array([0.5, -0.2, 0.1])
+    linear_velocity = np.array([0.2, -0.3, 0.4])
+    omega = np.array([0.1, 0.2, -0.4])
+    dt = 1e-7
+    delta = Quaternion.from_axis_angle(omega, np.linalg.norm(omega) * dt)
+    advanced = Pose3D(
+        translation=pose.translation + linear_velocity * dt,
+        rotation=delta.compose(pose.rotation),
+    )
+    finite_difference = (
+        point_position(advanced, local_point) - point_position(pose, local_point)
+    ) / dt
+
+    np.testing.assert_allclose(
+        point_velocity(pose, local_point, linear_velocity, omega),
+        finite_difference,
+        atol=2e-8,
+    )
+    np.testing.assert_allclose(
+        quaternion_rate_world(Quaternion.identity(), omega),
+        [0.0, 0.05, 0.1, -0.2],
+    )
+
+
+def test_resolved_frame_and_fixed_joint_residuals():
+    body_pose = Pose3D(
+        translation=(1.0, 2.0, 0.0),
+        rotation=Quaternion.from_axis_angle((0.0, 0.0, 1.0), np.pi / 2.0),
+    )
+    local_frame = Frame3D("tip", Pose3D(translation=(1.0, 0.0, 0.0)), parent_body=0)
+    resolved = resolve_frame_pose(local_frame, [body_pose])
+    joint = FixedJoint3D(
+        "world-fixed",
+        body_i=None,
+        body_j=0,
+        frame_i=resolved,
+        frame_j=local_frame.pose,
+    )
+
+    np.testing.assert_allclose(resolved.translation, [1.0, 3.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(fixed_joint_descriptor_residual(joint, [body_pose]), 0.0)
+    np.testing.assert_allclose(joint.residual([body_pose]), 0.0)
 
 
 def test_spherical_joint_residual_uses_canonical_vocabulary_descriptor():

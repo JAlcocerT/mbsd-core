@@ -1,14 +1,23 @@
 # Changelog
 
-## v0.7.0-dev - 3D Kinematics Preview
+## v0.7.0 - Spatial Kinematics Preview
 
-Local development branch only.
+Week 7 release.
 
 - Add experimental spatial point-position, pose-composition, and pose-inverse
   helpers.
 - Add point-coincidence residual evaluation to the canonical vocabulary
   `SphericalJoint3D`, including world endpoints.
 - Add `max_spatial_residual()` for simple 3D kinematic validation summaries.
+- Add public quaternion composition/inverse, point velocity, world-angular-
+  velocity quaternion rate, resolved frame poses, and fixed-joint residuals.
+- Publish spatial-model schema v2 for the clarified frame conventions, retain
+  validated v1 reading, and reject unknown schema versions explicitly.
+- Validate lower-level dynamics state shapes, times, tolerances, and initial
+  position/velocity consistency before integration.
+- Give empty planar diagnostics, solves, and exports a clear validation error.
+- Record paired release tags, package compatibility, and schema support in
+  `release-compatibility.json`.
 - Keep the preview residual-based; no general 3D position solver is claimed yet.
 
 ## v0.6.0 - Solver and Contract Hardening
