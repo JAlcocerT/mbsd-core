@@ -208,7 +208,7 @@ def solve_acceleration_with_lagrange(mbody, q, v, t, M, Q_total):
         - a: accelerations (ncoord,)
 
     This solves the full constrained dynamics equation:
-        M @ a + ∇V = Q_total + C_q^T @ λ
+        M @ a + C_q^T @ λ = Q_total
     subject to:
         C_q @ a = -dC_q/dt @ v - d²C/dt²
 
@@ -222,7 +222,8 @@ def solve_acceleration_with_lagrange(mbody, q, v, t, M, Q_total):
 
     Returns:
         a: acceleration vector (ncoord,)
-        lambda_t: Lagrange multipliers for constraint forces (nc,)
+        lambda_t: saddle-system multipliers; physical generalized reaction is
+            ``-C_q.T @ lambda_t``
     """
     # Get constraint Jacobian and its derivatives
     Cq = jacobian(mbody, q, t)  # (nc x ncoord)

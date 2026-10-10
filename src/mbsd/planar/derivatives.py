@@ -125,7 +125,21 @@ def dt_jacobian(mbody, q, v, t):
         DCq[row:row + 2, cj:cj + 3] = DCqp[:, 3:6]
         row += 2
 
-    row += 3 * mbody.nl + mbody.npl + mbody.ng
+    # CAM and point-on-line Jacobians are themselves evaluated by finite
+    # differences. Differentiate their rows along qdot so acceleration-level
+    # constraints retain the configuration-dependent terms.
+    complex_rows = 3 * mbody.nl + mbody.npl
+    if complex_rows:
+        from .jacobians import jacobian
+
+        speed_scale = max(1.0, float(np.linalg.norm(v, ord=np.inf)))
+        step = 1e-6 / speed_scale
+        derivative = (
+            jacobian(mbody, q + step * v, t)
+            - jacobian(mbody, q - step * v, t)
+        ) / (2.0 * step)
+        DCq[row : row + complex_rows] = derivative[row : row + complex_rows]
+    row += complex_rows + mbody.ng
 
     # User constraints
     for uc in mbody.user_constraints:

@@ -14,9 +14,19 @@ from mbsd.planar.dynamics import (
     solve_dynamics_scipy,
     solve_inverse_dynamics,
 )
+from mbsd.planar.forces import centrifugal_forces
 from mbsd.planar.jacobians import jacobian
 from mbsd.planar.kinematics import rot_mat
-from mbsd.planar.model import Body, GearJoint, MBody, PrismJoint, UserConstraint
+from mbsd.planar.model import (
+    Body,
+    GearJoint,
+    LevaJoint,
+    MBody,
+    PrismJoint,
+    PuntoLineaJoint,
+    UserConstraint,
+)
+from mbsd.planar.surfaces import CircleSurface, LineSurface
 from mbsd.planar.synthesis import (
     FourBar,
     affine_fit,
@@ -440,6 +450,68 @@ def test_lower_level_rk45_preserves_free_body_velocity():
     np.testing.assert_allclose(acceleration, 0.0, atol=1e-10)
     assert multipliers.shape == (3, len(t))
     np.testing.assert_allclose(reactions, 0.0, atol=1e-10)
+
+
+def test_rotating_frame_pseudo_forces_use_world_position_velocity_and_signs():
+    model = MBody()
+    model.bodies.append(Body("body", mass=2.0, inertia=1.0))
+    q = np.array([3.0, 4.0, 0.0])
+    v = np.array([5.0, 6.0, 0.0])
+
+    force = centrifugal_forces(model, q, omega=2.0, alpha=3.0, v=v)
+
+    # m * (omega^2*r - 2*omega_cross_v - alpha_cross_r)
+    np.testing.assert_allclose(force[:2], [96.0, -26.0], atol=1e-12)
+    np.testing.assert_allclose(
+        centrifugal_forces(
+            model, np.array([3.0, 0.0, 0.0]), omega=2.0, v=np.zeros(3)
+        )[:2],
+        [24.0, 0.0],
+        atol=1e-12,
+    )
+
+
+def test_reported_constraint_reaction_has_physical_sign():
+    model = MBody()
+    model.bodies.append(Body("fixed", mass=2.0, inertia=1.0))
+    q0 = np.zeros(model.ncoord)
+    v0 = np.zeros(model.ncoord)
+
+    *_, reactions = solve_dynamics_rk45(model, q0, v0, np.array([0.0, 0.1]))
+
+    np.testing.assert_allclose(reactions[1], 19.62, atol=1e-10)
+
+
+def test_complex_constraint_jacobian_time_derivative_matches_directional_difference():
+    model = MBody()
+    model.bodies.extend([Body("ground"), Body("follower")])
+    model.punto_linea_joints.append(
+        PuntoLineaJoint(0, 1, np.array([0.2, -0.1]), np.array([0.3, 0.4]), np.array([1.0, 0.0]))
+    )
+    q = np.array([0.0, 0.0, 0.2, 0.7, -0.3, -0.4])
+    v = np.array([0.0, 0.0, 0.5, -0.2, 0.4, -0.7])
+    step = 1e-6 / max(1.0, np.linalg.norm(v, ord=np.inf))
+    expected = (
+        jacobian(model, q + step * v, 0.0) - jacobian(model, q - step * v, 0.0)
+    ) / (2.0 * step)
+
+    np.testing.assert_allclose(dt_jacobian(model, q, v, 0.0)[3], expected[3], atol=1e-10)
+
+    cam = MBody()
+    cam.bodies.extend([Body("ground"), Body("cam")])
+    cam.leva_joints.append(
+        LevaJoint(0, 1, CircleSurface(1.0), LineSurface((1.0, 0.0)))
+    )
+    q_cam = np.array([0.0, 0.0, 0.1, 1.0, 0.2, -0.3, 0.4, -0.2])
+    v_cam = np.array([0.0, 0.0, 0.2, -0.1, 0.3, 0.5, 0.6, -0.4])
+    step_cam = 1e-6 / max(1.0, np.linalg.norm(v_cam, ord=np.inf))
+    expected_cam = (
+        jacobian(cam, q_cam + step_cam * v_cam, 0.0)
+        - jacobian(cam, q_cam - step_cam * v_cam, 0.0)
+    ) / (2.0 * step_cam)
+    np.testing.assert_allclose(
+        dt_jacobian(cam, q_cam, v_cam, 0.0)[3:6], expected_cam[3:6], atol=1e-10
+    )
 
 
 @pytest.mark.parametrize(

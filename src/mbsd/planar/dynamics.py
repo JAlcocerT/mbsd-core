@@ -1,8 +1,11 @@
 """
 2D Dynamics solver: equations of motion and time integration.
 
-Solves the constrained dynamics equation:
-    M(q) @ a + ∇V(q) = Q_ext(q, v, t) + C_q(q)^T @ λ(t)
+Solves the constrained dynamics equation using the saddle-system multiplier
+convention:
+    M(q) @ a + C_q(q)^T @ λ(t) = Q_ext(q, v, t)
+
+The physical generalized constraint reaction is ``-C_q.T @ λ``.
 
 subject to constraints:
     C(q, t) = 0
@@ -64,7 +67,7 @@ def assemble_system(mbody, q, v, t, springs=None, Q_user=None,
 
     Q_grav = gravity_forces(mbody, q)
     Q_spring = spring_damper_forces(mbody, q, v, springs)
-    Q_centrifugal = centrifugal_forces(mbody, q, omega, alpha)
+    Q_centrifugal = centrifugal_forces(mbody, q, omega, alpha, v=v)
     Q_contact = ground_contact_forces(mbody, q, v, contacts) if contacts else np.zeros(mbody.ncoord)
     Q_surf = (surface_contact_forces(mbody, q, v, surface_contacts)
               if surface_contacts else np.zeros(mbody.ncoord))
@@ -94,9 +97,10 @@ def solve_inverse_dynamics(mbody, q0, tspan, springs=None, Q_user_fn=None,
              [ C_q    0     ] [ λ ] = [ γ       ]
          where γ = -(dC_q/dt . v + d^2C/dt^2).
 
-    The Lagrange multipliers λ are the constraint reaction forces:
-      * Revolute-joint λ pair → (Rx, Ry) bearing reaction at that joint
-      * Prismatic-joint λ pair → (angular moment, normal reaction)
+    The physical generalized constraint reaction is ``-C_q.T @ λ``. Multiplier
+    blocks retain the saddle-system sign convention:
+      * Revolute-joint λ pair → negative of the corresponding bearing reaction
+      * Prismatic-joint λ pair → negative of the corresponding reaction block
       * User-constraint λ    → generalized force the constraint applies;
         the DRIVING force/torque the user must supply is `-λ_user`.
 
@@ -232,7 +236,7 @@ def solve_dynamics_rk45(
         )
         a_all[:, index] = acceleration
         lambda_all[:, index] = multipliers
-        reaction_all[:, index] = jacobian(mbody, q, t).T @ multipliers
+        reaction_all[:, index] = -jacobian(mbody, q, t).T @ multipliers
         if verbose and index % max(1, nsteps // 10) == 0:
             energy = kinetic_energy(mass, v) + potential_energy(mbody, q, springs=springs)
             print(f"  Step {index}/{nsteps}, t = {t:.3f}s, E = {energy:.3f} J")
@@ -306,7 +310,7 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
     """Solve dynamics using scipy.integrate.solve_ivp.
 
     Integrates the constrained dynamics equations:
-        M(q) @ a = Q_total + C_q^T @ lambda
+        M(q) @ a = Q_total - C_q^T @ lambda
         C_q @ a = -(dC_q/dt @ v + d^2 C/dt^2)
 
     The ODE state is [q, v] and the integrator evolves dq/dt = v, dv/dt = a.

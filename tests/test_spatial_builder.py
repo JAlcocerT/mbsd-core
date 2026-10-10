@@ -63,6 +63,10 @@ def test_spherical_pendulum_sequence_meets_position_and_velocity_tolerances():
 
     assert diagnostics.max_position_residual < 1e-8
     assert diagnostics.max_velocity_residual < 1e-8
+    assert diagnostics.max_translation_residual < 1e-8
+    assert diagnostics.max_rotation_residual < 1e-8
+    assert diagnostics.max_linear_velocity_residual < 1e-8
+    assert diagnostics.max_angular_velocity_residual < 1e-8
     assert diagnostics.max_trajectory_linear_velocity_error < 1e-5
     assert diagnostics.max_trajectory_angular_velocity_error < 2e-5
     assert diagnostics.trajectory_velocity_checked
@@ -232,6 +236,8 @@ def test_spatial_result_schema_round_trip_preserves_contract(tmp_path):
     assert payload["bodies"][1]["name"] == "link"
     assert len(payload["bodies"][1]["poses"]) == 2
     assert payload["diagnostics"]["trajectory_velocity_checked"] is False
+    assert len(payload["residual_layout"]) == len(payload["residuals"])
+    assert np.shape(payload["velocity_residuals"]) == np.shape(payload["residuals"])
 
     payload["mbsd_version"] = "0.8.0"
     assert validate_spatial_kinematic_result_payload(payload)["mbsd_version"] == "0.8.0"
@@ -267,9 +273,21 @@ def test_spatial_result_schema_rejects_shape_mismatch(tmp_path):
         ),
         (
             lambda value: value["bodies"][0]["poses"][0]["rotation"].update(w=0.0),
-            "quaternion norm must be non-zero",
+            "pose quaternion norm must be 1",
         ),
         (lambda value: value["diagnostics"].update(steps=99), "steps must match"),
+        (
+            lambda value: value["diagnostics"].update(max_position_residual=-123.0),
+            "non-negative finite number",
+        ),
+        (
+            lambda value: value["bodies"][0]["poses"][0]["rotation"].update(w=2.0),
+            "pose quaternion norm must be 1",
+        ),
+        (
+            lambda value: value["diagnostics"].update(max_position_residual=123.0),
+            "does not match residuals",
+        ),
         (
             lambda value: value["capabilities"].update(spatial_dynamics=True),
             "capabilities do not match",

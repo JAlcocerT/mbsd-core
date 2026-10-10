@@ -623,7 +623,7 @@ def surface_contact_forces(mbody, q, v, surface_contacts):
     return Q
 
 
-def centrifugal_forces(mbody, q, omega, alpha=None):
+def centrifugal_forces(mbody, q, omega, alpha=None, v=None):
     """Compute pseudo-forces for rotating/accelerating reference frame.
 
     When the reference frame rotates with angular velocity ω and
@@ -634,21 +634,27 @@ def centrifugal_forces(mbody, q, omega, alpha=None):
 
     Args:
         mbody: MBody mechanism definition
-        q: coordinate vector
+        q: coordinate vector containing body world positions
         omega: angular velocity (scalar in 2D)
         alpha: angular acceleration (scalar in 2D, optional)
+        v: coordinate-rate vector in the rotating frame (optional; zero when omitted)
 
     Returns:
         Q_centrifugal: (ncoord,) vector of pseudo-forces
     """
     if alpha is None:
         alpha = 0.0
+    q = np.asarray(q, dtype=float)
+    velocity = np.zeros_like(q) if v is None else np.asarray(v, dtype=float)
+    if q.shape != (mbody.ncoord,) or velocity.shape != (mbody.ncoord,):
+        raise ValueError(f"q and v must have shape ({mbody.ncoord},)")
 
     Q_centrifugal = np.zeros(mbody.ncoord)
 
     for i in range(mbody.nb):
         m_i = mbody.bodies[i].mass
-        rG = mbody.bodies[i].rG
+        position = q[3 * i : 3 * i + 2]
+        linear_velocity = velocity[3 * i : 3 * i + 2]
 
         # In 2D, ω = ω_z (scalar), represented as [0, 0, ω_z]
         # ω × r = [-ω_z * r_y, ω_z * r_x, 0]
@@ -656,13 +662,14 @@ def centrifugal_forces(mbody, q, omega, alpha=None):
         # -ω × (ω × r) = [ω_z² * r_x, ω_z² * r_y, 0]
 
         # Centrifugal acceleration: ω² * r (radially outward)
-        centrifugal = (omega**2) * rG
+        centrifugal = (omega**2) * position
 
-        # Euler acceleration: α × r = [-α_z * r_y, α_z * r_x]
-        euler = alpha * np.array([-rG[1], rG[0]])
+        # -2 ω×v and -α×r for coordinates expressed in the rotating frame.
+        coriolis = 2.0 * omega * np.array([linear_velocity[1], -linear_velocity[0]])
+        euler = alpha * np.array([position[1], -position[0]])
 
         # Total pseudo-acceleration (only translational in 2D)
-        pseudo_accel = centrifugal + euler
+        pseudo_accel = centrifugal + coriolis + euler
 
         # Generalized force (translational only)
         Q_centrifugal[3 * i : 3 * i + 2] = m_i * pseudo_accel

@@ -13,6 +13,16 @@
   for runtime drive behavior.
 - Solve rectangular constrained position systems with rank-aware minimum-norm
   world-frame projection and actionable rank/DOF failure details.
+- Correct rotating-frame centrifugal, Coriolis, and Euler forces using world
+  COM position/velocity and the documented pseudo-force signs.
+- Report physical generalized constraint reactions as `-Cq.T @ lambda` and
+  document the retained saddle-multiplier convention.
+- Include configuration-dependent CAM and point-on-line Jacobian derivatives
+  in acceleration-level constraints.
+- Separate translation/rotation and linear/angular-velocity constraint metrics
+  in spatial result diagnostics, with residual-row units exported explicitly.
+- Reject non-unit exported quaternions, negative diagnostics, and diagnostic
+  values that disagree with exported residual or trajectory arrays.
 - Preserve the `0.8.0` schema version and accept valid `0.8.0` result files.
 - Keep spatial dynamics outside the release; it remains planned for `0.9.0`.
 

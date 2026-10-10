@@ -149,6 +149,10 @@ class SpatialResultDiagnostics:
     steps: int
     max_position_residual: float
     max_velocity_residual: float
+    max_translation_residual: float
+    max_rotation_residual: float
+    max_linear_velocity_residual: float
+    max_angular_velocity_residual: float
     max_trajectory_linear_velocity_error: float
     max_trajectory_angular_velocity_error: float
     trajectory_velocity_checked: bool
@@ -160,6 +164,10 @@ class SpatialResultDiagnostics:
             "steps": self.steps,
             "max_position_residual": self.max_position_residual,
             "max_velocity_residual": self.max_velocity_residual,
+            "max_translation_residual_m": self.max_translation_residual,
+            "max_rotation_residual_rad": self.max_rotation_residual,
+            "max_linear_velocity_residual_m_per_s": self.max_linear_velocity_residual,
+            "max_angular_velocity_residual_rad_per_s": self.max_angular_velocity_residual,
             "max_trajectory_linear_velocity_error": (
                 self.max_trajectory_linear_velocity_error
             ),
@@ -488,31 +496,50 @@ class SpatialMechanism:
 
     def result_diagnostics(self, result: SpatialKinematicResult) -> SpatialResultDiagnostics:
         self._validate_result(result)
-        max_velocity = 0.0
-        finite = True
-        for index, poses in enumerate(result.poses):
-            velocity = np.concatenate(
-                (result.linear_velocity[index], result.angular_velocity[index]), axis=1
-            ).reshape(-1)
-            velocity_residual = (
-                self.constraint_jacobian(poses, float(result.t[index])) @ velocity
-                + self.constraint_time_derivative(poses, float(result.t[index]))
-            )
-            max_velocity = max(max_velocity, _infinity_norm(velocity_residual))
-            finite = finite and bool(np.all(np.isfinite(velocity_residual)))
+        velocity_residuals = self._velocity_residuals(result)
+        layout = self._residual_layout()
+        max_translation, max_rotation = _unit_separated_maxima(result.residuals, layout)
+        max_linear, max_angular = _unit_separated_maxima(velocity_residuals, layout)
         linear_error, angular_error, trajectory_checked = _trajectory_velocity_error(result)
         return SpatialResultDiagnostics(
             steps=len(result.t),
             max_position_residual=_infinity_norm(result.residuals),
-            max_velocity_residual=max_velocity,
+            max_velocity_residual=_infinity_norm(velocity_residuals),
+            max_translation_residual=max_translation,
+            max_rotation_residual=max_rotation,
+            max_linear_velocity_residual=max_linear,
+            max_angular_velocity_residual=max_angular,
             max_trajectory_linear_velocity_error=linear_error,
             max_trajectory_angular_velocity_error=angular_error,
             trajectory_velocity_checked=trajectory_checked,
-            finite=finite
+            finite=bool(np.all(np.isfinite(velocity_residuals)))
             and bool(np.all(np.isfinite(result.linear_velocity)))
             and bool(np.all(np.isfinite(result.angular_velocity))),
             success=result.success,
         )
+
+    def _velocity_residuals(self, result: SpatialKinematicResult) -> np.ndarray:
+        columns = []
+        for index, poses in enumerate(result.poses):
+            velocity = np.concatenate(
+                (result.linear_velocity[index], result.angular_velocity[index]), axis=1
+            ).reshape(-1)
+            columns.append(
+                self.constraint_jacobian(poses, float(result.t[index])) @ velocity
+                + self.constraint_time_derivative(poses, float(result.t[index]))
+            )
+        return np.column_stack(columns)
+
+    def _residual_layout(self) -> list[str]:
+        layout: list[str] = []
+        if self._ground is not None:
+            layout.extend(["translation"] * 3 + ["rotation"] * 3)
+        for joint in self._joints:
+            layout.extend(["translation"] * 3)
+            if isinstance(joint, FixedJoint3D):
+                layout.extend(["rotation"] * 3)
+        layout.extend(["translation"] * len(self._drives))
+        return layout
 
     def to_spatial_model(self) -> SpatialModel:
         return SpatialModel(
@@ -614,6 +641,8 @@ class SpatialMechanism:
             "diagnostics": diagnostics.as_dict(),
             "time": _vector(result.t),
             "residuals": np.asarray(result.residuals, dtype=float).tolist(),
+            "residual_layout": self._residual_layout(),
+            "velocity_residuals": self._velocity_residuals(result).tolist(),
             "bodies": [
                 {
                     "index": body_index,
@@ -770,10 +799,29 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
         raise ValueError("residuals must use constraint_by_time layout")
     if not np.all(np.isfinite(residuals)):
         raise ValueError("residuals must contain only finite values")
+    residual_layout = payload.get("residual_layout")
+    velocity_residuals = payload.get("velocity_residuals")
+    if (residual_layout is None) != (velocity_residuals is None):
+        raise ValueError("residual_layout and velocity_residuals must be provided together")
+    if residual_layout is not None:
+        if (
+            not isinstance(residual_layout, list)
+            or len(residual_layout) != residuals.shape[0]
+            or any(kind not in {"translation", "rotation"} for kind in residual_layout)
+        ):
+            raise ValueError("residual_layout must classify every residual row")
+        velocity_residuals = np.asarray(velocity_residuals, dtype=float)
+        if velocity_residuals.shape != residuals.shape or not np.all(
+            np.isfinite(velocity_residuals)
+        ):
+            raise ValueError("velocity_residuals must match residuals and be finite")
     bodies = payload["bodies"]
     if not isinstance(bodies, list) or not bodies:
         raise ValueError("bodies must be a non-empty list")
     names: list[str] = []
+    pose_histories: list[tuple[Pose3D, ...]] = []
+    linear_histories: list[np.ndarray] = []
+    angular_histories: list[np.ndarray] = []
     for index, body in enumerate(bodies):
         if not isinstance(body, Mapping):
             raise ValueError(f"bodies[{index}] must be a mapping")
@@ -785,19 +833,25 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
         poses = body.get("poses")
         if not isinstance(poses, list) or len(poses) != len(times):
             raise ValueError(f"bodies[{index}].poses must match time length")
+        parsed_poses: list[Pose3D] = []
         for pose_index, pose in enumerate(poses):
             try:
-                _pose_from_result_payload(pose)
+                parsed_poses.append(_pose_from_result_payload(pose))
             except (TypeError, ValueError) as error:
                 raise ValueError(
                     f"bodies[{index}].poses[{pose_index}] is invalid: {error}"
                 ) from error
+        pose_histories.append(tuple(parsed_poses))
         for velocity_name in ("linear_velocity", "angular_velocity"):
             velocity = np.asarray(body.get(velocity_name), dtype=float)
             if velocity.shape != (len(times), 3) or not np.all(np.isfinite(velocity)):
                 raise ValueError(
                     f"bodies[{index}].{velocity_name} must have shape ({len(times)}, 3)"
                 )
+            if velocity_name == "linear_velocity":
+                linear_histories.append(velocity)
+            else:
+                angular_histories.append(velocity)
     if len(names) != len(set(names)):
         raise ValueError("body names must be unique")
     diagnostics = payload["diagnostics"]
@@ -806,13 +860,24 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
         raise ValueError("diagnostics.steps must match time length")
     for name in ("max_position_residual", "max_velocity_residual"):
         value = diagnostics.get(name)
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or not np.isfinite(value):
-            raise ValueError(f"diagnostics.{name} must be a finite number")
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not np.isfinite(value)
+            or value < 0.0
+        ):
+            raise ValueError(f"diagnostics.{name} must be a non-negative finite number")
+    if not np.isclose(
+        diagnostics["max_position_residual"], _infinity_norm(residuals), atol=1e-15, rtol=1e-12
+    ):
+        raise ValueError("diagnostics.max_position_residual does not match residuals")
     for name in ("finite", "success"):
         if not isinstance(diagnostics.get(name), bool):
             raise ValueError(f"diagnostics.{name} must be a boolean")
     if diagnostics["success"] is not payload["solver_status"]["success"]:
         raise ValueError("diagnostics.success must match solver_status.success")
+    if diagnostics["finite"] is not True:
+        raise ValueError("diagnostics.finite must be true when all result arrays are finite")
     for name in (
         "max_trajectory_linear_velocity_error",
         "max_trajectory_angular_velocity_error",
@@ -823,12 +888,69 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
                 not isinstance(value, (int, float))
                 or isinstance(value, bool)
                 or not np.isfinite(value)
+                or value < 0.0
             ):
-                raise ValueError(f"diagnostics.{name} must be a finite number")
+                raise ValueError(f"diagnostics.{name} must be a non-negative finite number")
+    if residual_layout is not None:
+        expected_values = {
+            "max_translation_residual_m": _unit_separated_maxima(
+                residuals, residual_layout
+            )[0],
+            "max_rotation_residual_rad": _unit_separated_maxima(
+                residuals, residual_layout
+            )[1],
+            "max_linear_velocity_residual_m_per_s": _unit_separated_maxima(
+                velocity_residuals, residual_layout
+            )[0],
+            "max_angular_velocity_residual_rad_per_s": _unit_separated_maxima(
+                velocity_residuals, residual_layout
+            )[1],
+        }
+        for name, expected in expected_values.items():
+            value = diagnostics.get(name)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value < 0.0
+                or not np.isclose(value, expected, atol=1e-15, rtol=1e-12)
+            ):
+                raise ValueError(f"diagnostics.{name} does not match residual arrays")
+        if not np.isclose(
+            diagnostics["max_velocity_residual"],
+            _infinity_norm(velocity_residuals),
+            atol=1e-15,
+            rtol=1e-12,
+        ):
+            raise ValueError("diagnostics.max_velocity_residual does not match velocity_residuals")
     if "trajectory_velocity_checked" in diagnostics and not isinstance(
         diagnostics["trajectory_velocity_checked"], bool
     ):
         raise ValueError("diagnostics.trajectory_velocity_checked must be a boolean")
+    if "trajectory_velocity_checked" in diagnostics:
+        step_poses = tuple(
+            tuple(pose_histories[body][step] for body in range(len(bodies)))
+            for step in range(len(times))
+        )
+        expected_linear, expected_angular, expected_checked = (
+            _trajectory_velocity_error_arrays(
+                times,
+                step_poses,
+                np.stack(linear_histories, axis=1),
+                np.stack(angular_histories, axis=1),
+            )
+        )
+        for name, expected in (
+            ("max_trajectory_linear_velocity_error", expected_linear),
+            ("max_trajectory_angular_velocity_error", expected_angular),
+        ):
+            if not np.isclose(
+                diagnostics.get(name, np.nan), expected, atol=1e-12, rtol=1e-9
+            ):
+                raise ValueError(f"diagnostics.{name} does not match pose trajectory")
+        if diagnostics["trajectory_velocity_checked"] is not expected_checked:
+            raise ValueError(
+                "diagnostics.trajectory_velocity_checked does not match time length"
+            )
     try:
         return json.loads(json.dumps(payload, allow_nan=False))
     except (TypeError, ValueError) as error:
@@ -856,9 +978,17 @@ def _pose_from_result_payload(payload: Any) -> Pose3D:
     if not isinstance(rotation, Mapping):
         raise ValueError("pose rotation must be a mapping")
     try:
-        quaternion = Quaternion(*(rotation[name] for name in ("w", "x", "y", "z")))
+        components = np.asarray(
+            [rotation[name] for name in ("w", "x", "y", "z")], dtype=float
+        )
     except KeyError as error:
         raise ValueError(f"pose rotation missing {error.args[0]!r}") from error
+    if not np.all(np.isfinite(components)):
+        raise ValueError("pose rotation components must be finite")
+    norm = float(np.linalg.norm(components))
+    if not np.isclose(norm, 1.0, atol=1e-10, rtol=1e-10):
+        raise ValueError(f"pose quaternion norm must be 1, got {norm:.12g}")
+    quaternion = Quaternion(*components)
     return Pose3D(translation=translation, rotation=quaternion)
 
 
@@ -873,25 +1003,36 @@ def _trajectory_velocity_error(
     result: SpatialKinematicResult,
 ) -> tuple[float, float, bool]:
     """Compare reported velocities with centered pose differences at interior steps."""
-    if len(result.t) < 3:
+    return _trajectory_velocity_error_arrays(
+        result.t, result.poses, result.linear_velocity, result.angular_velocity
+    )
+
+
+def _trajectory_velocity_error_arrays(
+    times: np.ndarray,
+    poses: tuple[tuple[Pose3D, ...], ...],
+    linear_velocity: np.ndarray,
+    angular_velocity: np.ndarray,
+) -> tuple[float, float, bool]:
+    if len(times) < 3:
         return 0.0, 0.0, False
     max_linear = 0.0
     max_angular = 0.0
-    for index in range(1, len(result.t) - 1):
-        duration = float(result.t[index + 1] - result.t[index - 1])
-        for body_index in range(result.linear_velocity.shape[1]):
-            previous = result.poses[index - 1][body_index]
-            following = result.poses[index + 1][body_index]
+    for index in range(1, len(times) - 1):
+        duration = float(times[index + 1] - times[index - 1])
+        for body_index in range(linear_velocity.shape[1]):
+            previous = poses[index - 1][body_index]
+            following = poses[index + 1][body_index]
             linear = (following.translation - previous.translation) / duration
             relative = following.rotation.compose(previous.rotation.inverse())
             angular = _rotation_vector(relative) / duration
             max_linear = max(
                 max_linear,
-                _infinity_norm(linear - result.linear_velocity[index, body_index]),
+                _infinity_norm(linear - linear_velocity[index, body_index]),
             )
             max_angular = max(
                 max_angular,
-                _infinity_norm(angular - result.angular_velocity[index, body_index]),
+                _infinity_norm(angular - angular_velocity[index, body_index]),
             )
     return max_linear, max_angular, True
 
@@ -937,7 +1078,20 @@ def _time_array(value: np.ndarray) -> np.ndarray:
 
 def _infinity_norm(value: np.ndarray) -> float:
     array = np.asarray(value, dtype=float)
-    return float(np.linalg.norm(array, ord=np.inf)) if array.size else 0.0
+    return float(np.max(np.abs(array))) if array.size else 0.0
+
+
+def _unit_separated_maxima(
+    residuals: np.ndarray, layout: list[str] | tuple[str, ...]
+) -> tuple[float, float]:
+    array = np.asarray(residuals, dtype=float)
+    if array.ndim != 2 or array.shape[0] != len(layout):
+        raise ValueError("residual layout must match the residual row count")
+    translation_rows = [index for index, kind in enumerate(layout) if kind == "translation"]
+    rotation_rows = [index for index, kind in enumerate(layout) if kind == "rotation"]
+    translation = _infinity_norm(array[translation_rows]) if translation_rows else 0.0
+    rotation = _infinity_norm(array[rotation_rows]) if rotation_rows else 0.0
+    return translation, rotation
 
 
 def _vector(value: np.ndarray) -> list[float]:
