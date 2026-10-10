@@ -14,6 +14,13 @@
 - Add versioned spatial kinematic-result JSON exports and a validating reader.
 - Add explicit conversion between `SpatialMechanism` and portable
   `SpatialModel` descriptions.
+- Add unit-aware translation/rotation residual summaries and accept complete
+  fixed-joint residual vectors in the compatibility maximum helper.
+- Replace the fixed-joint quaternion-vector approximation with an SO(3) log
+  residual, an analytic Jacobian, and explicit 180-degree branch rejection.
+- Validate schema-v2 spatial-model bodies, frames, joints, units, conventions,
+  capabilities, references, and finite JSON values; retain header-only v1 reads.
+- Reject one-sample planar dynamics requests at both public and lower-level APIs.
 - Keep spatial dynamics, rotational equations of motion, contact, and a broad
   joint catalog outside this release.
 

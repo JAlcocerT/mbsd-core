@@ -15,7 +15,11 @@
     },
     "mbsd.spatial.model": {
       "emitted": 2,
-      "readable": [1, 2]
+      "readable": [1, 2],
+      "validation": {
+        "1": "header_only",
+        "2": "structural_and_semantic"
+      }
     },
     "mbsd.spatial.kinematic_result": {
       "emitted": 1,

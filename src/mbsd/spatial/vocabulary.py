@@ -371,7 +371,7 @@ class SpatialModel:
                 "fixed_joint_residual": True,
                 "joint_residual_jacobian": {
                     "spherical": "analytic",
-                    "fixed": "finite_difference",
+                    "fixed": "analytic",
                 },
                 "general_spatial_solver": False,
                 "spatial_dynamics": False,
@@ -403,7 +403,8 @@ class SpatialModel:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps(self.as_dict(), indent=indent, sort_keys=True) + "\n",
+            json.dumps(self.as_dict(), indent=indent, sort_keys=True, allow_nan=False)
+            + "\n",
             encoding="utf-8",
         )
         return path
@@ -414,7 +415,11 @@ class SpatialModel:
 
 
 def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate a supported spatial-model export and return a detached copy."""
+    """Validate an export and return a detached copy.
+
+    Legacy schema v1 receives header validation only. Schema v2 receives full
+    structural and semantic validation through the public vocabulary types.
+    """
     if not isinstance(payload, Mapping):
         raise TypeError("spatial model payload must be a mapping")
     if payload.get("schema") != SPATIAL_MODEL_SCHEMA:
@@ -448,7 +453,137 @@ def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]
         )
     if schema_version == 2 and not isinstance(payload.get("capabilities"), Mapping):
         raise ValueError("schema_version 2 capabilities must be a mapping")
-    return json.loads(json.dumps(payload))
+    if schema_version == 2:
+        _validate_spatial_model_v2(payload)
+    try:
+        return json.loads(json.dumps(payload, allow_nan=False))
+    except (TypeError, ValueError) as error:
+        raise ValueError("spatial model payload must contain finite JSON values") from error
+
+
+def _validate_spatial_model_v2(payload: Mapping[str, Any]) -> None:
+    if not isinstance(payload.get("mbsd_version"), str) or not payload["mbsd_version"]:
+        raise ValueError("mbsd_version must be a non-empty string")
+    if payload.get("status") != "experimental" or payload.get("dimension") != 3:
+        raise ValueError("schema v2 requires experimental status and dimension 3")
+    expected_units = {
+        "length": "m",
+        "angle": "rad",
+        "mass": "kg",
+        "inertia": "kg*m^2",
+    }
+    if payload.get("units") != expected_units:
+        raise ValueError(f"units must be {expected_units!r}")
+    expected_conventions = SpatialModel().as_dict()["conventions"]
+    if payload.get("conventions") != expected_conventions:
+        raise ValueError("conventions must match the schema v2 spatial conventions")
+    capabilities = payload.get("capabilities")
+    expected_flags = {
+        "pose_transforms": True,
+        "point_position": True,
+        "point_velocity": True,
+        "spherical_joint_residual": True,
+        "fixed_joint_residual": True,
+        "general_spatial_solver": False,
+        "spatial_dynamics": False,
+    }
+    if not isinstance(capabilities, Mapping) or any(
+        capabilities.get(name) is not expected for name, expected in expected_flags.items()
+    ):
+        raise ValueError("capabilities contain an invalid schema v2 capability flag")
+    jacobian_capabilities = capabilities.get("joint_residual_jacobian")
+    if not isinstance(jacobian_capabilities, Mapping) or (
+        jacobian_capabilities.get("spherical") != "analytic"
+        or jacobian_capabilities.get("fixed") not in {"finite_difference", "analytic"}
+    ):
+        raise ValueError("joint_residual_jacobian capabilities are invalid")
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("metadata must be a mapping")
+    try:
+        bodies = tuple(
+            SpatialBody(
+                name=_required(item, "name", "body"),
+                mass=_required(item, "mass", "body"),
+                inertia=_required(item, "inertia", "body"),
+                center_of_mass=_required(item, "center_of_mass", "body"),
+                pose=_pose_from_payload(_required(item, "pose", "body"), "body pose"),
+            )
+            for index, item in enumerate(payload["bodies"])
+            if _validate_index(item, index, "body")
+        )
+        frames = tuple(
+            Frame3D(
+                name=_required(item, "name", "frame"),
+                pose=_pose_from_payload(_required(item, "pose", "frame"), "frame pose"),
+                parent_body=_required(item, "parent_body", "frame"),
+            )
+            for item in payload["frames"]
+            if _require_mapping(item, "frame")
+        )
+        joints = tuple(
+            _joint_from_payload(item, index)
+            for index, item in enumerate(payload["joints"])
+        )
+        SpatialModel(bodies=bodies, frames=frames, joints=joints, metadata=metadata)
+        _json_ready(dict(metadata))
+    except (TypeError, ValueError, IndexError, KeyError) as error:
+        raise ValueError(f"invalid schema v2 spatial model: {error}") from error
+
+
+def _require_mapping(value: Any, name: str) -> bool:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be a mapping")
+    return True
+
+
+def _required(value: Any, key: str, name: str) -> Any:
+    _require_mapping(value, name)
+    if key not in value:
+        raise ValueError(f"{name} missing required field {key!r}")
+    return value[key]
+
+
+def _validate_index(value: Any, expected: int, name: str) -> bool:
+    _require_mapping(value, name)
+    if value.get("index") != expected:
+        raise ValueError(f"{name} index must be {expected}")
+    return True
+
+
+def _pose_from_payload(value: Any, name: str) -> Pose3D:
+    return Pose3D(
+        translation=_required(value, "translation", name),
+        rotation=Quaternion(
+            *(
+                _required(_required(value, "rotation", name), component, f"{name} rotation")
+                for component in ("w", "x", "y", "z")
+            )
+        ),
+    )
+
+
+def _joint_from_payload(value: Any, index: int) -> SpatialJoint3D:
+    _validate_index(value, index, "joint")
+    common = {
+        "name": _required(value, "name", "joint"),
+        "body_i": _required(value, "body_i", "joint"),
+        "body_j": _required(value, "body_j", "joint"),
+    }
+    kind = _required(value, "kind", "joint")
+    if kind == "spherical":
+        return SphericalJoint3D(
+            **common,
+            point_i=_required(value, "point_i", "joint"),
+            point_j=_required(value, "point_j", "joint"),
+        )
+    if kind == "fixed":
+        return FixedJoint3D(
+            **common,
+            frame_i=_pose_from_payload(_required(value, "frame_i", "joint"), "frame_i"),
+            frame_j=_pose_from_payload(_required(value, "frame_j", "joint"), "frame_j"),
+        )
+    raise ValueError(f"unsupported joint kind {kind!r}")
 
 
 def load_spatial_model_payload(path: str | Path) -> dict[str, Any]:

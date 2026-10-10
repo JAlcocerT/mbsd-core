@@ -260,6 +260,9 @@ def test_bad_inputs_raise_clear_errors():
     with pytest.raises(ValueError, match="strictly increasing"):
         mechanism.solve_kinematics(np.array([0.0, 0.0]))
 
+    with pytest.raises(ValueError, match="at least two time values"):
+        mechanism.simulate(np.array([0.0]), q0=np.zeros(mechanism.ncoord))
+
     with pytest.raises(ValueError, match="shape"):
         mechanism.simulate(np.array([0.0, 0.1]), q0=np.zeros(mechanism.ncoord + 1))
 
@@ -445,6 +448,7 @@ def test_lower_level_rk45_preserves_free_body_velocity():
         ("q0", np.zeros(2), "q0 must be a finite vector"),
         ("v0", np.array([0.0, np.nan, 0.0]), "v0 must be a finite vector"),
         ("t", np.array([]), "t_eval must be a non-empty"),
+        ("t", np.array([0.0]), "at least two time values"),
         ("t", np.array([0.1, 0.0]), "t_eval must be strictly increasing"),
         ("position_tol", 0.0, "position_tol must be a positive"),
         ("velocity_tol", np.inf, "velocity_tol must be a positive"),

@@ -21,6 +21,7 @@ from mbsd.spatial import (
     resolve_frame_pose,
     spherical_joint_descriptor_residual,
     spherical_joint_residual,
+    spatial_residual_summary,
     SpatialBody,
     SpatialModel,
     SphericalJoint3D,
@@ -144,7 +145,7 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
     assert payload["status"] == "experimental"
     assert payload["capabilities"]["joint_residual_jacobian"] == {
         "spherical": "analytic",
-        "fixed": "finite_difference",
+        "fixed": "analytic",
     }
     assert payload["capabilities"]["general_spatial_solver"] is False
     assert payload["units"]["inertia"] == "kg*m^2"
@@ -179,6 +180,26 @@ def test_spatial_schema_rejects_unknown_versions():
     payload["schema_version"] = 99
 
     with pytest.raises(ValueError, match="unsupported spatial model schema_version 99"):
+        validate_spatial_model_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda payload: payload["units"].update(length="mm"), "units must be"),
+        (lambda payload: payload["bodies"][0].update(mass=-1.0), "mass must be positive"),
+        (lambda payload: payload["bodies"][0].update(mass=np.nan), "mass must be finite"),
+        (lambda payload: payload["frames"][0].update(parent_body=9), "out of range"),
+    ],
+)
+def test_spatial_v2_schema_rejects_corrupt_nested_data(mutate, message):
+    payload = SpatialModel(
+        bodies=(SpatialBody("body"),),
+        frames=(Frame3D("frame", parent_body=0),),
+    ).as_dict()
+    mutate(payload)
+
+    with pytest.raises(ValueError, match=message):
         validate_spatial_model_payload(payload)
 
 
@@ -441,6 +462,68 @@ def test_analytic_spherical_jacobian_matches_independent_central_difference():
             ) / (2.0 * step)
 
     np.testing.assert_allclose(analytic, numeric, atol=2e-9)
+
+
+def test_analytic_fixed_jacobian_matches_independent_central_difference():
+    joint = FixedJoint3D(
+        "fixed",
+        0,
+        1,
+        Pose3D((0.2, -0.1, 0.3), Quaternion.from_axis_angle((1, 0, 1), 0.2)),
+        Pose3D((-0.1, 0.4, 0.2), Quaternion.from_axis_angle((0, 1, 1), -0.3)),
+    )
+    poses = [
+        Pose3D((0.2, -0.4, 0.1), Quaternion.from_axis_angle((1, 2, 3), 0.7)),
+        Pose3D((-0.3, 0.1, 0.6), Quaternion.from_axis_angle((-2, 1, 1), -0.4)),
+    ]
+    analytic = joint_residual_jacobian(joint, poses)
+    numeric = np.zeros_like(analytic)
+    step = 1e-7
+    for body_index, pose in enumerate(poses):
+        for coordinate in range(6):
+            axis = np.zeros(3)
+            plus = list(poses)
+            minus = list(poses)
+            if coordinate < 3:
+                axis[coordinate] = step
+                plus[body_index] = Pose3D(pose.translation + axis, pose.rotation)
+                minus[body_index] = Pose3D(pose.translation - axis, pose.rotation)
+            else:
+                axis[coordinate - 3] = 1.0
+                plus[body_index] = Pose3D(
+                    pose.translation,
+                    Quaternion.from_axis_angle(axis, step).compose(pose.rotation),
+                )
+                minus[body_index] = Pose3D(
+                    pose.translation,
+                    Quaternion.from_axis_angle(axis, -step).compose(pose.rotation),
+                )
+            numeric[:, 6 * body_index + coordinate] = (
+                joint.residual(plus) - joint.residual(minus)
+            ) / (2.0 * step)
+
+    np.testing.assert_allclose(analytic, numeric, atol=5e-9)
+
+
+def test_fixed_joint_log_residual_rejects_ambiguous_pi_branch():
+    joint = FixedJoint3D("fixed", None, 0)
+    pose = Pose3D(rotation=Quaternion.from_axis_angle((1, 2, 3), np.pi))
+
+    with pytest.raises(ValueError, match="undefined near 180 degrees"):
+        joint.residual([pose])
+    with pytest.raises(ValueError, match="undefined near 180 degrees"):
+        joint_residual_jacobian(joint, [pose])
+
+
+def test_spatial_residual_summary_keeps_translation_and_rotation_units_separate():
+    summary = spatial_residual_summary(
+        [np.array([0.1, -0.2, 0.05]), np.array([0.3, 0.1, 0.2, 0.01, -0.04, 0.02])]
+    )
+
+    assert summary.max_translation_residual == pytest.approx(0.3)
+    assert summary.max_rotation_residual == pytest.approx(0.04)
+    assert summary.as_dict()["max_rotation_residual_rad"] == pytest.approx(0.04)
+    assert max_spatial_residual([np.arange(6.0)]) == 5.0
 
 
 def test_spatial_kinematics_reject_invalid_inputs():

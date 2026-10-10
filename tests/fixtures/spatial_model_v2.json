@@ -1,18 +1,39 @@
 {
   "schema": "mbsd.spatial.model",
   "schema_version": 2,
+  "mbsd_version": "0.7.0",
+  "status": "experimental",
   "capabilities": {
+    "pose_transforms": true,
+    "point_position": true,
+    "point_velocity": true,
+    "spherical_joint_residual": true,
+    "fixed_joint_residual": true,
     "general_spatial_solver": false,
+    "spatial_dynamics": false,
     "joint_residual_jacobian": {
       "spherical": "analytic",
       "fixed": "finite_difference"
     }
   },
+  "dimension": 3,
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "mass": "kg",
+    "inertia": "kg*m^2"
+  },
   "conventions": {
+    "world_frame": "right_handed_xyz",
+    "rotation": "active_body_to_world",
+    "quaternion_order": ["w", "x", "y", "z"],
     "body_pose": "body_to_world",
     "frame_pose": "parent_body_local; world_when_parent_body_is_null",
-    "fixed_joint_frames": "body_local; world_when_body_is_null"
+    "fixed_joint_frames": "body_local; world_when_body_is_null",
+    "inertia": "principal_moments_about_com_in_body_frame",
+    "joint_points": "body_local_xyz; world_xyz_when_body_is_null"
   },
+  "metadata": {},
   "bodies": [],
   "frames": [],
   "joints": []

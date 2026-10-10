@@ -712,6 +712,8 @@ class PlanarMechanism:
         from ..errors import MechanismSolveError
 
         t = _as_time_array(t)
+        if t.size < 2:
+            raise ValueError("dynamic integration requires at least two time values")
         velocity_tol = _as_finite_scalar(velocity_tol, "velocity_tol")
         if velocity_tol <= 0.0:
             raise ValueError("velocity_tol must be positive")

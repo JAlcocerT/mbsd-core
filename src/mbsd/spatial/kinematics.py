@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from .vocabulary import FixedJoint3D, Frame3D, Pose3D, Quaternion, SphericalJoint3D
@@ -106,10 +108,8 @@ def fixed_joint_descriptor_residual(
     frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)
     frame_j = _joint_frame_pose(joint.body_j, joint.frame_j, poses)
     relative_rotation = frame_j.rotation.inverse().compose(frame_i.rotation)
-    vector = relative_rotation.as_array()[1:]
-    if relative_rotation.w < 0.0:
-        vector = -vector
-    return np.concatenate((frame_i.translation - frame_j.translation, 2.0 * vector))
+    rotation_vector = _rotation_vector(relative_rotation)
+    return np.concatenate((frame_i.translation - frame_j.translation, rotation_vector))
 
 
 def joint_residual_jacobian(
@@ -122,8 +122,8 @@ def joint_residual_jacobian(
 
     Each body contributes ``[dx, dy, dz, dRx, dRy, dRz]`` columns. Rotation
     increments are active, world-expressed, and applied before the body pose.
-    Spherical-joint blocks are analytic; fixed joints currently use carefully
-    validated central differences.
+    Spherical- and fixed-joint blocks are analytic. Fixed-joint rotation uses
+    the local SO(3) logarithm chart and rejects the ambiguous 180-degree branch.
     """
     if not isinstance(joint, (SphericalJoint3D, FixedJoint3D)):
         raise TypeError("joint must be a SphericalJoint3D or FixedJoint3D")
@@ -136,18 +136,7 @@ def joint_residual_jacobian(
         raise ValueError("step must be a positive finite scalar")
     if isinstance(joint, SphericalJoint3D):
         return _spherical_joint_residual_jacobian(joint, poses)
-    residual = joint.residual(poses)
-    result = np.zeros((residual.size, 6 * len(poses)))
-    for body_index in range(len(poses)):
-        for coordinate in range(6):
-            plus = list(poses)
-            minus = list(poses)
-            plus[body_index] = _perturb_pose(poses[body_index], coordinate, step)
-            minus[body_index] = _perturb_pose(poses[body_index], coordinate, -step)
-            result[:, 6 * body_index + coordinate] = (
-                joint.residual(plus) - joint.residual(minus)
-            ) / (2.0 * step)
-    return result
+    return _fixed_joint_residual_jacobian(joint, poses)
 
 
 def _spherical_joint_residual_jacobian(
@@ -174,12 +163,111 @@ def _skew(vector: np.ndarray) -> np.ndarray:
     return np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
 
 
+def _fixed_joint_residual_jacobian(
+    joint: FixedJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+) -> np.ndarray:
+    frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)
+    frame_j = _joint_frame_pose(joint.body_j, joint.frame_j, poses)
+    relative_rotation = frame_j.rotation.inverse().compose(frame_i.rotation)
+    rotation_vector = _rotation_vector(relative_rotation)
+    rotation_block = (
+        _left_jacobian_inverse(rotation_vector)
+        @ frame_j.rotation.to_rotation_matrix().T
+    )
+    result = np.zeros((6, 6 * len(poses)))
+    for sign, body, frame in (
+        (1.0, joint.body_i, joint.frame_i),
+        (-1.0, joint.body_j, joint.frame_j),
+    ):
+        if body is None:
+            continue
+        pose = _body_pose(body, poses)
+        offset_world = pose.rotation.rotate(frame.translation)
+        start = 6 * body
+        result[:3, start : start + 3] += sign * np.eye(3)
+        result[:3, start + 3 : start + 6] += -sign * _skew(offset_world)
+        result[3:, start + 3 : start + 6] += sign * rotation_block
+    return result
+
+
+def _rotation_vector(rotation: Quaternion) -> np.ndarray:
+    values = rotation.normalized().as_array()
+    if values[0] < 0.0:
+        values = -values
+    if abs(values[0]) <= 1e-7:
+        raise ValueError(
+            "fixed-joint rotation residual is undefined near 180 degrees; "
+            "initialize the solve inside the local SO(3) chart"
+        )
+    vector = values[1:]
+    norm = float(np.linalg.norm(vector))
+    if norm <= np.finfo(float).eps:
+        return np.zeros(3)
+    angle = 2.0 * np.arctan2(norm, values[0])
+    return vector * (angle / norm)
+
+
+def _left_jacobian_inverse(rotation_vector: np.ndarray) -> np.ndarray:
+    angle = float(np.linalg.norm(rotation_vector))
+    skew = _skew(rotation_vector)
+    if angle < 1e-6:
+        return np.eye(3) - 0.5 * skew + (skew @ skew) / 12.0
+    coefficient = 1.0 / angle**2 - (1.0 + np.cos(angle)) / (
+        2.0 * angle * np.sin(angle)
+    )
+    return np.eye(3) - 0.5 * skew + coefficient * (skew @ skew)
+
+
+@dataclass(frozen=True)
+class SpatialResidualSummary:
+    """Unit-aware maximum residuals for spatial joint constraints."""
+
+    max_translation_residual: float
+    max_rotation_residual: float
+    finite: bool
+
+    def as_dict(self) -> dict[str, float | bool]:
+        return {
+            "max_translation_residual_m": self.max_translation_residual,
+            "max_rotation_residual_rad": self.max_rotation_residual,
+            "finite": self.finite,
+        }
+
+
+def spatial_residual_summary(
+    residuals: list[np.ndarray] | tuple[np.ndarray, ...],
+) -> SpatialResidualSummary:
+    """Summarize spherical (3) and fixed-joint (6) residual vectors by unit."""
+    translation: list[float] = []
+    rotation: list[float] = []
+    for residual in residuals:
+        vector = _as_residual_vector(residual)
+        if vector.size not in (3, 6):
+            raise ValueError("spatial residuals must have shape (3,) or (6,)")
+        translation.append(float(np.linalg.norm(vector[:3], ord=np.inf)))
+        if vector.size == 6:
+            rotation.append(float(np.linalg.norm(vector[3:], ord=np.inf)))
+    return SpatialResidualSummary(
+        max(translation, default=0.0), max(rotation, default=0.0), True
+    )
+
+
 def max_spatial_residual(residuals: list[np.ndarray] | tuple[np.ndarray, ...]) -> float:
-    """Return the maximum infinity-norm residual over spatial residual vectors."""
+    """Return a raw maximum; use ``spatial_residual_summary`` for unit safety."""
     if not residuals:
         return 0.0
-    vectors = [_as_vector(residual, "residual") for residual in residuals]
+    vectors = [_as_residual_vector(residual) for residual in residuals]
     return float(max(np.linalg.norm(residual, ord=np.inf) for residual in vectors))
+
+
+def _as_residual_vector(value: np.ndarray) -> np.ndarray:
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim != 1 or arr.size == 0:
+        raise ValueError("residual must be a non-empty one-dimensional vector")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("residual must contain only finite values")
+    return arr
 
 
 def _as_vector(value: np.ndarray, name: str) -> np.ndarray:

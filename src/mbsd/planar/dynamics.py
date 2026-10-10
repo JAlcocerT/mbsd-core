@@ -356,6 +356,10 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
         )
     if t_eval.ndim != 1 or t_eval.size == 0 or not np.all(np.isfinite(t_eval)):
         raise MechanismSolveError("t_eval must be a non-empty finite one-dimensional array.")
+    if t_eval.size < 2:
+        raise MechanismSolveError(
+            "t_eval must contain at least two time values for dynamic integration."
+        )
     if t_eval.size > 1 and np.any(np.diff(t_eval) <= 0.0):
         raise MechanismSolveError("t_eval must be strictly increasing.")
     for name, value in (

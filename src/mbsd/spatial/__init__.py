@@ -29,6 +29,8 @@ from .kinematics import (
     resolve_frame_pose,
     spherical_joint_descriptor_residual,
     spherical_joint_residual,
+    spatial_residual_summary,
+    SpatialResidualSummary,
 )
 from .vocabulary import (
     FixedJoint3D,
@@ -58,6 +60,7 @@ __all__ = [
     "SpatialMechanism",
     "SpatialModelDiagnostics",
     "SpatialResultDiagnostics",
+    "SpatialResidualSummary",
     "SpatialBody",
     "SpatialModel",
     "SPATIAL_MODEL_SCHEMA",
@@ -76,6 +79,7 @@ __all__ = [
     "resolve_frame_pose",
     "spherical_joint_descriptor_residual",
     "spherical_joint_residual",
+    "spatial_residual_summary",
     "validate_spatial_model_payload",
     "validate_spatial_kinematic_result_payload",
 ]
