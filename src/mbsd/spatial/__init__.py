@@ -6,25 +6,55 @@ stabilized.
 """
 
 from .kinematics import (
-    SphericalJoint3D,
+    compose_pose,
+    fixed_joint_descriptor_residual,
+    inverse_pose,
+    joint_residual_jacobian,
     max_spatial_residual,
     point_position,
+    point_velocity,
+    quaternion_rate_world,
+    resolve_frame_pose,
+    spherical_joint_descriptor_residual,
     spherical_joint_residual,
 )
-from .dynamics import SpatialState, simulate_free_body, step_free_body
-from .vocabulary import Frame3D, Pose3D, Quaternion, SpatialBody, SpatialModel
+from .vocabulary import (
+    FixedJoint3D,
+    Frame3D,
+    Pose3D,
+    Quaternion,
+    SpatialBody,
+    SpatialModel,
+    SphericalJoint3D,
+    SPATIAL_MODEL_SCHEMA,
+    SPATIAL_MODEL_SCHEMA_VERSION,
+    SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS,
+    load_spatial_model_payload,
+    validate_spatial_model_payload,
+)
 
 __all__ = [
+    "FixedJoint3D",
     "Frame3D",
     "Pose3D",
     "Quaternion",
     "SphericalJoint3D",
-    "SpatialState",
     "SpatialBody",
     "SpatialModel",
+    "SPATIAL_MODEL_SCHEMA",
+    "SPATIAL_MODEL_SCHEMA_VERSION",
+    "SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS",
+    "compose_pose",
+    "fixed_joint_descriptor_residual",
+    "inverse_pose",
+    "joint_residual_jacobian",
+    "load_spatial_model_payload",
     "max_spatial_residual",
     "point_position",
-    "simulate_free_body",
+    "point_velocity",
+    "quaternion_rate_world",
+    "resolve_frame_pose",
+    "spherical_joint_descriptor_residual",
     "spherical_joint_residual",
-    "step_free_body",
+    "validate_spatial_model_payload",
 ]

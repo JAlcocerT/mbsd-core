@@ -2,31 +2,33 @@
 
 Readable Python tools for planar multibody mechanism kinematics and dynamics.
 
+Runnable companion examples and generated gallery assets live in
+[MBSD Examples](https://github.com/JAlcocerT/mbsd-examples).
+
 MBSD is a small, inspectable mechanism framework. It is aimed at engineers,
 students, and researchers who want to script mechanisms directly in Python:
 declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
-The public API is intentionally focused on **2D planar mechanisms**. Plotting,
-CAD/export, gallery, browser-demo, larger synthesis workflows, and 3D work
-will be released separately after the core API is stable.
+The stable solver API is intentionally focused on **2D planar mechanisms**.
+Core also contains an experimental spatial data vocabulary, but not a 3D
+solver. Plotting, gallery, browser UI, larger synthesis workflows, and
+CAD-specific integrations remain separate while the API stabilizes. Portable
+JSON and CSV exports support downstream applications and neutral CAD handoffs.
 
 ## Install
 
-```sh
+```bash
+git clone https://github.com/JAlcocerT/mbsd-core.git
+cd mbsd-core
+git checkout v0.6.0
 uv sync --extra dev
 ```
 
-Plain pip also works:
+Plain pip and the optional plotting extra also work from the cloned repository:
 
-```sh
-pip install -e .[dev]
-```
-
-Plotting is optional:
-
-```sh
-pip install -e .[plot]
+```bash
+python -m pip install -e ".[dev,plot]"
 ```
 
 ## Quick Start
@@ -57,13 +59,14 @@ print(m.diagnostics(result).as_dict())
 print(result.q[3, -1])  # slider x at final time
 ```
 
-The local `v0.4.0-dev` branch includes portable export helpers for downstream
-apps:
+Since `0.4.0`, MBSD includes portable export helpers for downstream applications:
 
 ```python
 m.to_json("mechanism.json")
 m.result_to_json(result, "result.json")
 m.result_to_csv(result, "trajectory.csv")
+m.point_trace_to_json(result, slider, (0.2, 0.0), "slider-point.json")
+m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
 ```
 
 ## What Works Now
@@ -79,16 +82,44 @@ m.result_to_csv(result, "trajectory.csv")
 - Constraint residual, assertion, and diagnostics helpers for validating solved
   trajectories.
 - Static model diagnostics with Jacobian rank, rank-based DOF, and nominal DOF.
-- JSON/CSV export helpers on the local `v0.4.0-dev` branch.
-- Experimental `mbsd.spatial` vocabulary on the local `v0.5.0-dev` branch.
-- Per-configuration solver diagnostics on the local `v0.6.0-dev` branch.
-- Experimental 3D point kinematics on the local `v0.7.0-dev` branch.
-- Limited experimental 3D free-body dynamics on the local `v0.8.0-dev` branch.
+- Versioned JSON and CSV mechanism, result, and body-point export helpers.
+- Experimental `mbsd.spatial` vocabulary for portable 3D model descriptions.
+- Per-configuration solver diagnostics with explicit model classification.
+- Experimental spatial transforms, point velocities, and joint residuals in
+  `0.7.0`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
 its center of mass. Offset-COM kinematics are accepted, but offset-COM dynamics
 raise a clear error until the corresponding inertial terms are implemented.
+
+## Experimental Spatial Vocabulary
+
+MBSD `0.5.0` defines data structures for 3D poses, bodies, frames, and fixed or
+spherical joint sketches under `mbsd.spatial`. It can write a versioned JSON
+model for visualization and geometry handoffs. This is a model vocabulary only:
+it does not solve 3D constraints, kinematics, or dynamics, and the API may
+change before `1.0`.
+
+Spatial data uses a right-handed XYZ world frame, metres, kilograms, seconds,
+and radians. Quaternions are `[w, x, y, z]` active rotations from body to world.
+Body inertia values are principal moments about the center of mass in the body
+frame. Joint points are body-local; a `None` body reference means the world and
+its point is expressed in world coordinates.
+
+## Experimental Spatial Kinematics
+
+MBSD `0.7.0` adds point transforms and velocities, pose composition and
+inversion, frame-pose resolution, spherical/fixed-joint residuals, and
+finite-difference residual Jacobians. Angular velocity and Jacobian rotation
+increments are world-expressed. Spatial schema v2 advertises these capabilities
+and explicitly reports that no general spatial solver or dynamics is available.
+These helpers evaluate supplied poses; they do not provide a general spatial
+position, velocity, or acceleration solver. The namespace remains experimental.
+
+Planar dynamics results record the integration method, tolerances, stabilization
+and projection settings, package version, and underconstraint policy in their
+`provenance` mapping and result JSON export.
 
 ## Examples
 
@@ -133,20 +164,52 @@ solver kernel that stays close enough to the equations to inspect and modify.
 
 ## Repository Notes
 
-This repository is the first weekly OSS release. The historical workbench still
-contains course material, generated plots, animations, synthesis experiments,
-fluid mechanics work, CAD rendering, and a 3D MBSD kernel. This branch keeps
-only the public package surface under:
+This repository contains the installable public framework. The historical
+workbench still contains course material, generated
+plots, animations, synthesis experiments, fluid mechanics work, CAD rendering,
+and a 3D MBSD kernel. Release branches keep only the public package surface
+under:
 
 ```text
 src/mbsd/
 ```
 
-Plotting, CAD/export, browser demos, gallery assets, larger synthesis
-workflows, and 3D mechanisms are intentionally outside this core repository.
+Plotting, CAD-specific integrations, browser demos, gallery assets, larger
+synthesis workflows, and solved 3D mechanisms are intentionally outside this
+core repository. Experimental spatial description and export objects live
+under `mbsd.spatial`.
 
 Longer-form docs, release planning, and website content live outside this core
 package repository.
+
+## Export Contract
+
+The handoff schemas available since `0.4.0` are:
+
+- `mbsd.planar.mechanism`: bodies, joints, drives, gravity, explicit
+  spring-damper descriptors, units, conventions, and caller metadata.
+- `mbsd.planar.result`: time, body coordinates, velocities, optional
+  accelerations, body poses, diagnostics, units, conventions, and metadata.
+- `mbsd.planar.point_trace`: position, velocity, and optional acceleration for
+  a named point expressed in a body's local frame.
+
+Every JSON payload contains `schema`, `schema_version`, and `mbsd_version`.
+Lengths use metres, angles use radians, time uses seconds, and rotations are
+counterclockwise-positive in an inertial XY frame. Array-valued result data is
+stored component-by-time. CSV headers carry their SI units.
+
+Springs are supplied explicitly when exporting a mechanism:
+
+```python
+from mbsd import Spring
+
+spring = Spring(int(ground), int(slider), k=20.0, c=0.5, l0=0.4)
+m.to_json("mechanism.json", springs=[spring], metadata={"consumer": "cad"})
+```
+
+A spring must have an explicit natural length to be portable. Arbitrary Python
+force callbacks are intentionally not serialized; consumers should exchange
+supported force descriptors or application-specific metadata instead.
 
 ## Consulting
 

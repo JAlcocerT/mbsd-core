@@ -1,46 +1,57 @@
 # Changelog
 
-## v0.8.0-dev - 3D Dynamics Preview
+## v0.7.0 - Spatial Kinematics Preview
 
-Local development branch only.
-
-- Add experimental `SpatialState`.
-- Add a limited unconstrained free-body stepper and sampled simulation helper.
-- Keep this preview explicitly separate from full constrained 3D multibody
-  dynamics.
-
-## v0.7.0-dev - 3D Kinematics Preview
-
-Local development branch only.
-
-- Add experimental spatial point-position helpers.
-- Add `SphericalJoint3D` point-coincidence residuals.
+- Add experimental spatial point-position, pose-composition, and pose-inverse
+  helpers.
+- Add point-coincidence residual evaluation to the canonical vocabulary
+  `SphericalJoint3D`, including world endpoints.
 - Add `max_spatial_residual()` for simple 3D kinematic validation summaries.
+- Add public quaternion composition/inverse, point velocity, world-angular-
+  velocity quaternion rate, resolved frame poses, and fixed-joint residuals.
+- Add analytic spherical-joint and finite-difference fixed-joint residual
+  Jacobians with explicit world-increment conventions and numerical checks.
+- Record integration method, tolerances, stabilization, projection, package
+  version, and underconstraint policy in planar dynamics result provenance.
+- Publish spatial-model schema v2 for the clarified frame conventions, retain
+  validated v1 reading, explicit capability metadata, and unknown-version
+  rejection.
+- Validate lower-level dynamics state shapes, times, tolerances, and initial
+  position/velocity consistency before integration.
+- Give empty planar diagnostics, solves, and exports a clear validation error.
+- Record paired release tags, package compatibility, and schema support in
+  `release-compatibility.json`.
 - Keep the preview residual-based; no general 3D position solver is claimed yet.
 
-## v0.6.0-dev - 2D Solver Hardening
-
-Local development branch only.
+## v0.6.0 - Solver and Contract Hardening
 
 - Add `ConfigurationDiagnostics` for single-state residual and Jacobian health
   checks.
-- Add `PlanarMechanism.configuration_diagnostics(q, t, v=None)` for PWA-style
+- Add `PlanarMechanism.configuration_diagnostics(q, t, v=None)` for downstream
   validation panels and solver debugging.
 - Include velocity-level residuals when a velocity vector is supplied.
+- Classify fully constrained, underconstrained, overconstrained, and
+  rank-deficient configurations explicitly.
+- Make `solve_dynamics_rk45()` perform genuine RK45 integration and preserve
+  caller-supplied initial velocities.
+- Reject unsupported offset-center-of-mass models at every dynamics entry
+  point, including lower-level functions.
+- Harden experimental spatial values, collection invariants, inertia checks,
+  and frame-pose export conventions.
+- Build and import-test distributions in CI.
 
-## v0.5.0-dev - Experimental 3D Vocabulary
-
-Local development branch only.
+## v0.5.0 - Experimental 3D Vocabulary
 
 - Add experimental `mbsd.spatial` namespace.
-- Add `Quaternion`, `Pose3D`, `SpatialBody`, `Frame3D`, and `SpatialModel`.
-- Add JSON-ready spatial model export payloads.
+- Add posed `SpatialBody` objects and world- or body-local `Frame3D` objects.
+- Add data-only spherical and fixed joint sketches with explicit world-body
+  references.
+- Add versioned JSON spatial model exports with SI units, coordinate
+  conventions, and caller metadata.
 - Keep the 3D track vocabulary-only at this stage; no solved 3D kinematics or
   dynamics are claimed yet.
 
-## v0.4.0-dev - Export Schema
-
-Local development branch only.
+## v0.4.0 - Export Schema
 
 - Add JSON-ready planar mechanism exports.
 - Add JSON-ready planar result exports with diagnostics.
@@ -49,10 +60,16 @@ Local development branch only.
   `result_to_json()`, and `result_to_csv()`.
 - Record metadata for built-in motor and coordinate-drive constraints so export
   consumers can identify them.
-- Keep browser/PWA implementation code outside `mbsd-core`; the core exposes
-  portable schemas for downstream apps.
+- Add explicit SI units, coordinate conventions, caller metadata, and portable
+  linear spring-damper descriptors to mechanism exports.
+- Add JSON and CSV traces for named body-local points used by CAD and browser
+  handoffs.
+- Reject non-finite and nonserializable export values with clear errors.
+- Expose the installed package version through `mbsd.__version__`.
+- Keep application UI code outside `mbsd-core`; the core exposes portable
+  schemas for downstream consumers.
 
-## v0.3.0 - Week 3 Synthesis Preview
+## v0.3.0 - Synthesis Preview
 
 Prepared release candidate.
 
@@ -75,7 +92,7 @@ Prepared release candidate.
   invalid geometry, and affine-fit behavior.
 - Keep top-level `mbsd` exports unchanged.
 
-## v0.2.0 - Week 2 Validation
+## v0.2.0 - Validation
 
 Prepared release candidate.
 
@@ -89,7 +106,7 @@ Prepared release candidate.
   `MechanismSolveError`.
 - Keep core runtime dependencies limited to NumPy and SciPy.
 
-## v0.1.0 - Week 1 Core
+## v0.1.0 - Initial Core
 
 Initial public core release candidate.
 

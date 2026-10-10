@@ -1,0 +1,19 @@
+{
+  "schema": "mbsd.spatial.model",
+  "schema_version": 2,
+  "capabilities": {
+    "general_spatial_solver": false,
+    "joint_residual_jacobian": {
+      "spherical": "analytic",
+      "fixed": "finite_difference"
+    }
+  },
+  "conventions": {
+    "body_pose": "body_to_world",
+    "frame_pose": "parent_body_local; world_when_parent_body_is_null",
+    "fixed_joint_frames": "body_local; world_when_body_is_null"
+  },
+  "bodies": [],
+  "frames": [],
+  "joints": []
+}
