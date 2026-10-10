@@ -604,7 +604,7 @@ class SpatialMechanism:
 
 
 def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate and detach a spatial kinematic-result interchange payload."""
+    """Structurally and semantically validate a result interchange payload."""
     if not isinstance(payload, Mapping):
         raise TypeError("spatial kinematic result payload must be a mapping")
     if payload.get("schema") != RESULT_SCHEMA:
@@ -614,6 +614,10 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
             "unsupported spatial kinematic result schema_version "
             f"{payload.get('schema_version')!r}; supported version is {RESULT_SCHEMA_VERSION}"
         )
+    if not isinstance(payload.get("mbsd_version"), str) or not payload["mbsd_version"]:
+        raise ValueError("mbsd_version must be a non-empty string")
+    if payload.get("status") != "experimental" or payload.get("dimension") != 3:
+        raise ValueError("spatial kinematic results require experimental status and dimension 3")
     for field_name in (
         "model_id",
         "units",
@@ -642,6 +646,27 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
             raise ValueError(f"{field_name} must be a mapping")
     if not isinstance(payload["solver_status"].get("success"), bool):
         raise ValueError("solver_status.success must be a boolean")
+    if not isinstance(payload["solver_status"].get("message"), str):
+        raise ValueError("solver_status.message must be a string")
+    expected_units = {
+        "length": "m",
+        "angle": "rad",
+        "time": "s",
+        "linear_velocity": "m/s",
+        "angular_velocity": "rad/s",
+    }
+    if payload["units"] != expected_units:
+        raise ValueError(f"units must be {expected_units!r}")
+    expected_conventions = {
+        "world_frame": "right_handed_xyz",
+        "rotation": "active_body_to_world",
+        "quaternion_order": ["w", "x", "y", "z"],
+        "velocity_frame": "world",
+        "array_layout": "time_body_component",
+    }
+    if payload["conventions"] != expected_conventions:
+        raise ValueError("conventions must match the spatial kinematic-result contract")
+    _validate_result_capabilities(payload["capabilities"])
     times = np.asarray(payload["time"], dtype=float)
     if times.ndim != 1 or times.size == 0 or not np.all(np.isfinite(times)):
         raise ValueError("time must be a non-empty finite one-dimensional array")
@@ -662,8 +687,18 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
         if body.get("index") != index or not isinstance(body.get("name"), str):
             raise ValueError(f"bodies[{index}] has invalid identity fields")
         names.append(body["name"])
-        if len(body.get("poses", [])) != len(times):
+        if not body["name"]:
+            raise ValueError(f"bodies[{index}].name must be non-empty")
+        poses = body.get("poses")
+        if not isinstance(poses, list) or len(poses) != len(times):
             raise ValueError(f"bodies[{index}].poses must match time length")
+        for pose_index, pose in enumerate(poses):
+            try:
+                _pose_from_result_payload(pose)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"bodies[{index}].poses[{pose_index}] is invalid: {error}"
+                ) from error
         for velocity_name in ("linear_velocity", "angular_velocity"):
             velocity = np.asarray(body.get(velocity_name), dtype=float)
             if velocity.shape != (len(times), 3) or not np.all(np.isfinite(velocity)):
@@ -672,7 +707,50 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
                 )
     if len(names) != len(set(names)):
         raise ValueError("body names must be unique")
-    return json.loads(json.dumps(payload))
+    diagnostics = payload["diagnostics"]
+    expected_steps = diagnostics.get("steps")
+    if isinstance(expected_steps, bool) or expected_steps != len(times):
+        raise ValueError("diagnostics.steps must match time length")
+    for name in ("max_position_residual", "max_velocity_residual"):
+        value = diagnostics.get(name)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not np.isfinite(value):
+            raise ValueError(f"diagnostics.{name} must be a finite number")
+    for name in ("finite", "success"):
+        if not isinstance(diagnostics.get(name), bool):
+            raise ValueError(f"diagnostics.{name} must be a boolean")
+    if diagnostics["success"] is not payload["solver_status"]["success"]:
+        raise ValueError("diagnostics.success must match solver_status.success")
+    try:
+        return json.loads(json.dumps(payload, allow_nan=False))
+    except (TypeError, ValueError) as error:
+        raise ValueError("spatial kinematic result must contain finite JSON values") from error
+
+
+def _validate_result_capabilities(capabilities: Mapping[str, Any]) -> None:
+    expected = {
+        "position_solve": True,
+        "velocity_solve": True,
+        "spatial_dynamics": False,
+        "velocity_frame": "world",
+    }
+    if any(capabilities.get(name) != value for name, value in expected.items()):
+        raise ValueError("capabilities do not match the spatial kinematics contract")
+    if capabilities.get("joint_types") not in (("spherical", "fixed"), ["spherical", "fixed"]):
+        raise ValueError("capabilities.joint_types must contain spherical and fixed")
+
+
+def _pose_from_result_payload(payload: Any) -> Pose3D:
+    if not isinstance(payload, Mapping):
+        raise ValueError("pose must be a mapping")
+    translation = payload.get("translation")
+    rotation = payload.get("rotation")
+    if not isinstance(rotation, Mapping):
+        raise ValueError("pose rotation must be a mapping")
+    try:
+        quaternion = Quaternion(*(rotation[name] for name in ("w", "x", "y", "z")))
+    except KeyError as error:
+        raise ValueError(f"pose rotation missing {error.args[0]!r}") from error
+    return Pose3D(translation=translation, rotation=quaternion)
 
 
 def load_spatial_kinematic_result_payload(path: str | Path) -> dict[str, Any]:
@@ -735,6 +813,8 @@ def _json_ready(value: Any) -> Any:
         return {str(key): _json_ready(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
         return [_json_ready(item) for item in value]
+    if isinstance(value, float) and not np.isfinite(value):
+        raise ValueError("JSON numbers must be finite")
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     raise TypeError(f"value of type {type(value).__name__} is not JSON serializable")
@@ -743,7 +823,10 @@ def _json_ready(value: Any) -> Any:
 def _write_json(payload: dict[str, Any], path: str | Path, indent: int) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=indent, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=indent, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     return path
 
 

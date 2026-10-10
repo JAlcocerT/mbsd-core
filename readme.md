@@ -21,7 +21,7 @@ JSON and CSV exports support downstream applications and neutral CAD handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.8.0
+git checkout v0.8.1
 uv sync --extra dev
 ```
 
@@ -123,6 +123,10 @@ and frame handles, reports Jacobian rank and degrees of freedom, exports
 identity-linked results, and converts explicitly to the portable `SpatialModel`
 description. It remains experimental and does not expose spatial dynamics,
 rotational equations of motion, contact, or a broad joint catalog.
+
+MBSD `0.8.1` hardens the same experimental kinematics surface: result readers
+now validate complete pose, diagnostics, units, conventions, and capability
+records. It does not add spatial dynamics or change the schema version.
 
 Planar dynamics results record the integration method, tolerances, stabilization
 and projection settings, package version, and underconstraint policy in their

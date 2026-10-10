@@ -183,6 +183,9 @@ def test_spatial_result_schema_round_trip_preserves_contract(tmp_path):
     assert payload["bodies"][1]["name"] == "link"
     assert len(payload["bodies"][1]["poses"]) == 2
 
+    payload["mbsd_version"] = "0.8.0"
+    assert validate_spatial_kinematic_result_payload(payload)["mbsd_version"] == "0.8.0"
+
     payload["schema_version"] = 99
     with pytest.raises(ValueError, match="unsupported spatial kinematic result"):
         validate_spatial_kinematic_result_payload(payload)
@@ -199,6 +202,41 @@ def test_spatial_result_schema_rejects_shape_mismatch(tmp_path):
     payload["bodies"][1]["linear_velocity"] = [[0.0, 0.0, 0.0]]
 
     with pytest.raises(ValueError, match="linear_velocity must have shape"):
+        validate_spatial_kinematic_result_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda value: value["units"].update(length="mm"), "units must be"),
+        (
+            lambda value: value["bodies"][0]["poses"][0]["translation"].__setitem__(
+                0, np.nan
+            ),
+            "translation must contain only finite values",
+        ),
+        (
+            lambda value: value["bodies"][0]["poses"][0]["rotation"].update(w=0.0),
+            "quaternion norm must be non-zero",
+        ),
+        (lambda value: value["diagnostics"].update(steps=99), "steps must match"),
+        (
+            lambda value: value["capabilities"].update(spatial_dynamics=True),
+            "capabilities do not match",
+        ),
+    ],
+)
+def test_spatial_result_schema_rejects_corrupt_nested_data(mutate, message):
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    link = mechanism.body("link")
+    mechanism.fixed(ground, link)
+    payload = mechanism.result_to_dict(
+        mechanism.solve_kinematics(np.array([0.0, 0.1]))
+    )
+    mutate(payload)
+
+    with pytest.raises(ValueError, match=message):
         validate_spatial_kinematic_result_payload(payload)
 
 

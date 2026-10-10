@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.1 - Spatial Kinematics Hardening
+
+- Fully validate nested poses, quaternions, body identities, diagnostics,
+  capabilities, units, and conventions in spatial kinematic-result payloads.
+- Reject non-finite JSON values during result validation and writing.
+- Preserve the `0.8.0` schema version and accept valid `0.8.0` result files.
+- Keep spatial dynamics outside the release; it remains planned for `0.9.0`.
+
 ## v0.8.0 - Constrained Spatial Kinematics
 
 - Add the experimental `Mechanism.spatial()` builder with stable body and frame
