@@ -23,6 +23,13 @@
   in spatial result diagnostics, with residual-row units exported explicitly.
 - Reject non-unit exported quaternions, negative diagnostics, and diagnostic
   values that disagree with exported residual or trajectory arrays.
+- Apply the rotating-frame Euler pseudo-torque `-I*alpha` for planar bodies.
+- Reject non-unit quaternions in spatial-model payloads before vocabulary
+  construction can normalize them.
+- Reject successful spatial results whose position or velocity residual exceeds
+  the solver tolerance recorded in provenance.
+- Align the lower-level point-on-line constraint with its documented geometry:
+  `hi` is the line direction in body j and the residual is perpendicular distance.
 - Preserve the `0.8.0` schema version and accept valid `0.8.0` result files.
 - Keep spatial dynamics outside the release; it remains planned for `0.9.0`.
 

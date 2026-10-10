@@ -673,8 +673,7 @@ def centrifugal_forces(mbody, q, omega, alpha=None, v=None):
 
         # Generalized force (translational only)
         Q_centrifugal[3 * i : 3 * i + 2] = m_i * pseudo_accel
-
-        # Note: No rotational pseudo-torque in 2D (ω is perpendicular to plane)
+        Q_centrifugal[3 * i + 2] = -mbody.bodies[i].inertia * alpha
 
     return Q_centrifugal
 

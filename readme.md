@@ -137,7 +137,8 @@ Planar dynamics uses the saddle-multiplier convention
 `M @ a + Cq.T @ lambda = Q`; exported generalized constraint reactions are the
 physical `-Cq.T @ lambda`. Rotating-frame loads include centrifugal, Coriolis,
 and Euler pseudo-forces evaluated from world COM position and rotating-frame
-velocity.
+velocity; angular frame acceleration also contributes the planar Euler torque
+`-I*alpha`.
 
 Planar dynamics results record the integration method, tolerances, stabilization
 and projection settings, package version, and underconstraint policy in their

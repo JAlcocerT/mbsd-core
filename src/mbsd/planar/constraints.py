@@ -45,7 +45,7 @@ def prism(joint, qi, qj):
 def punto_linea(joint, qi, qj):
     """Point-on-Line constraint: point on body i stays on line on body j.
 
-    C = (Ai*hi)^T * (Ri + Ai*ri - Rj - Aj*rj) = 0   (1 equation)
+    C = normal(Aj*hi)^T * (Ri + Ai*ri - Rj - Aj*rj) = 0
 
     Migrated from PuntoLinea_2D.m
 
@@ -63,11 +63,12 @@ def punto_linea(joint, qi, qj):
     # Relative position vector
     rel_pos = qi[:2] + Ai @ joint.ri - qj[:2] - Aj @ joint.rj
 
-    # Line direction in global frame
-    line_dir = Ai @ joint.hi
+    # The line belongs to body j; hi is its body-j-local direction.
+    line_dir = Aj @ joint.hi
+    line_normal = np.array([-line_dir[1], line_dir[0]])
 
     # Perpendicular distance from point to line
-    return np.dot(line_dir, rel_pos)
+    return np.dot(line_normal, rel_pos)
 
 
 def _find_closest_surface_params(geom_i, geom_j, qi, qj, ri, rj, s_init_i=0, s_init_j=0):

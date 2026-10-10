@@ -552,14 +552,22 @@ def _validate_index(value: Any, expected: int, name: str) -> bool:
 
 
 def _pose_from_payload(value: Any, name: str) -> Pose3D:
+    rotation = _required(value, "rotation", name)
+    components = np.asarray(
+        [
+            _required(rotation, component, f"{name} rotation")
+            for component in ("w", "x", "y", "z")
+        ],
+        dtype=float,
+    )
+    if not np.all(np.isfinite(components)):
+        raise ValueError(f"{name} quaternion components must be finite")
+    norm = float(np.linalg.norm(components))
+    if not np.isclose(norm, 1.0, atol=1e-10, rtol=1e-10):
+        raise ValueError(f"{name} quaternion norm must be 1, got {norm:.12g}")
     return Pose3D(
         translation=_required(value, "translation", name),
-        rotation=Quaternion(
-            *(
-                _required(_required(value, "rotation", name), component, f"{name} rotation")
-                for component in ("w", "x", "y", "z")
-            )
-        ),
+        rotation=Quaternion(*components),
     )
 
 

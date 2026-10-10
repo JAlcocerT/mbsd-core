@@ -190,6 +190,10 @@ def test_spatial_schema_rejects_unknown_versions():
         (lambda payload: payload["bodies"][0].update(mass=-1.0), "mass must be positive"),
         (lambda payload: payload["bodies"][0].update(mass=np.nan), "mass must be finite"),
         (lambda payload: payload["frames"][0].update(parent_body=9), "out of range"),
+        (
+            lambda payload: payload["bodies"][0]["pose"]["rotation"].update(w=2.0),
+            "quaternion norm must be 1",
+        ),
     ],
 )
 def test_spatial_v2_schema_rejects_corrupt_nested_data(mutate, message):

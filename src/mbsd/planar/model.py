@@ -46,7 +46,7 @@ class PuntoLineaJoint:
     """Point-on-Line joint: point on body i stays on line on body j.
     ri: local point on body i
     rj: reference point on body j
-    hi: line direction in body i's local frame (defines the line)
+    hi: line direction in body j's local frame (defines the line)
     """
     i: int
     j: int

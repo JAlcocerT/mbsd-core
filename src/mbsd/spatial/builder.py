@@ -878,6 +878,21 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
         raise ValueError("diagnostics.success must match solver_status.success")
     if diagnostics["finite"] is not True:
         raise ValueError("diagnostics.finite must be true when all result arrays are finite")
+    tolerance = payload["provenance"].get("tolerance")
+    if (
+        not isinstance(tolerance, (int, float))
+        or isinstance(tolerance, bool)
+        or not np.isfinite(tolerance)
+        or tolerance <= 0.0
+    ):
+        raise ValueError("provenance.tolerance must be a positive finite number")
+    if payload["solver_status"]["success"] and (
+        diagnostics["max_position_residual"] > tolerance
+        or diagnostics["max_velocity_residual"] > tolerance
+    ):
+        raise ValueError(
+            "successful result residuals must not exceed provenance.tolerance"
+        )
     for name in (
         "max_trajectory_linear_velocity_error",
         "max_trajectory_angular_velocity_error",

@@ -308,6 +308,22 @@ def test_spatial_result_schema_rejects_corrupt_nested_data(mutate, message):
         validate_spatial_kinematic_result_payload(payload)
 
 
+def test_successful_spatial_result_cannot_exceed_recorded_solver_tolerance():
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    link = mechanism.body("link")
+    mechanism.fixed(ground, link)
+    payload = mechanism.result_to_dict(
+        mechanism.solve_kinematics(np.array([0.0, 0.1]))
+    )
+    payload["residuals"][0][0] = 1.0
+    payload["diagnostics"]["max_position_residual"] = 1.0
+    payload["diagnostics"]["max_translation_residual_m"] = 1.0
+
+    with pytest.raises(ValueError, match="must not exceed provenance.tolerance"):
+        validate_spatial_kinematic_result_payload(payload)
+
+
 def test_spatial_builder_does_not_claim_dynamics():
     mechanism = Mechanism.spatial()
 

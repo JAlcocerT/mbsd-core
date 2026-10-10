@@ -462,6 +462,7 @@ def test_rotating_frame_pseudo_forces_use_world_position_velocity_and_signs():
 
     # m * (omega^2*r - 2*omega_cross_v - alpha_cross_r)
     np.testing.assert_allclose(force[:2], [96.0, -26.0], atol=1e-12)
+    assert force[2] == pytest.approx(-3.0)
     np.testing.assert_allclose(
         centrifugal_forces(
             model, np.array([3.0, 0.0, 0.0]), omega=2.0, v=np.zeros(3)
@@ -469,6 +470,26 @@ def test_rotating_frame_pseudo_forces_use_world_position_velocity_and_signs():
         [24.0, 0.0],
         atol=1e-12,
     )
+
+    torque_model = MBody()
+    torque_model.bodies.append(Body("body", mass=1.0, inertia=5.0))
+    assert centrifugal_forces(
+        torque_model, np.zeros(3), omega=0.0, alpha=3.0
+    )[2] == pytest.approx(-15.0)
+
+
+def test_point_on_line_uses_body_j_line_direction_and_perpendicular_distance():
+    model = MBody()
+    model.bodies.extend([Body("point"), Body("line")])
+    model.punto_linea_joints.append(
+        PuntoLineaJoint(0, 1, np.zeros(2), np.zeros(2), np.array([1.0, 0.0]))
+    )
+
+    on_x_axis = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    assert constraints(model, on_x_axis, 0.0)[3] == pytest.approx(0.0)
+
+    rotated_line = np.array([0.0, 1.0, 0.0, 0.0, 0.0, np.pi / 2.0])
+    assert constraints(model, rotated_line, 0.0)[3] == pytest.approx(0.0, abs=1e-12)
 
 
 def test_reported_constraint_reaction_has_physical_sign():
