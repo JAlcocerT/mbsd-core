@@ -11,8 +11,6 @@ from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
-from scipy.optimize import least_squares
-
 from ..errors import MechanismSolveError
 from .kinematics import joint_residual_jacobian
 from .vocabulary import (
@@ -29,6 +27,8 @@ from .vocabulary import (
 ArrayLike3 = Iterable[float]
 RESULT_SCHEMA = "mbsd.spatial.kinematic_result"
 RESULT_SCHEMA_VERSION = 1
+DRIVE_DERIVATIVE_ATOL = 1e-7
+DRIVE_DERIVATIVE_RTOL = 1e-5
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,25 @@ class SpatialCoordinateDrive:
         axis = {"x": 0, "y": 1, "z": 2}[self.coordinate]
         return float(poses[self.body].translation[axis] - self.value(t))
 
+    def validate_derivative(self, t: float) -> None:
+        """Reject a velocity callback inconsistent with the value callback."""
+        t = _finite_scalar(t, "t")
+        step = 1e-5 * max(1.0, abs(t))
+        forward = _finite_scalar(self.value(t + step), "drive value")
+        backward = _finite_scalar(self.value(t - step), "drive value")
+        numeric = (forward - backward) / (2.0 * step)
+        analytic = _finite_scalar(self.velocity(t), "drive velocity")
+        tolerance = DRIVE_DERIVATIVE_ATOL + DRIVE_DERIVATIVE_RTOL * max(
+            abs(numeric), abs(analytic)
+        )
+        if abs(numeric - analytic) > tolerance:
+            raise ValueError(
+                f"coordinate drive {self.coordinate!r} velocity is inconsistent with "
+                f"the derivative of its value law at t={t:g}: "
+                f"reported {analytic:.6g}, numerical derivative {numeric:.6g}, "
+                f"tolerance {tolerance:.3e}"
+            )
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "kind": "coordinate_drive",
@@ -88,6 +107,7 @@ class SpatialKinematicResult:
     success: bool
     message: str
     model_id: str
+    excitation_id: str
     provenance: Mapping[str, Any] = field(default_factory=dict)
     capabilities: Mapping[str, Any] = field(default_factory=dict)
 
@@ -129,6 +149,9 @@ class SpatialResultDiagnostics:
     steps: int
     max_position_residual: float
     max_velocity_residual: float
+    max_trajectory_linear_velocity_error: float
+    max_trajectory_angular_velocity_error: float
+    trajectory_velocity_checked: bool
     finite: bool
     success: bool
 
@@ -137,6 +160,13 @@ class SpatialResultDiagnostics:
             "steps": self.steps,
             "max_position_residual": self.max_position_residual,
             "max_velocity_residual": self.max_velocity_residual,
+            "max_trajectory_linear_velocity_error": (
+                self.max_trajectory_linear_velocity_error
+            ),
+            "max_trajectory_angular_velocity_error": (
+                self.max_trajectory_angular_velocity_error
+            ),
+            "trajectory_velocity_checked": self.trajectory_velocity_checked,
             "finite": self.finite,
             "success": self.success,
         }
@@ -279,26 +309,42 @@ class SpatialMechanism:
         t = _finite_scalar(t, "t")
         tol = _positive_scalar(tol, "tol")
 
-        def residual(increments: np.ndarray) -> np.ndarray:
-            return self.constraint_residual(self._apply_increments(poses, increments), t)
-
-        solver_tol = max(np.finfo(float).eps * 32.0, tol * 0.01)
-        solution = least_squares(
-            residual,
-            np.zeros(self.ncoord),
-            xtol=solver_tol,
-            ftol=solver_tol,
-            gtol=solver_tol,
-            max_nfev=max_nfev,
+        if isinstance(max_nfev, bool) or not isinstance(max_nfev, int) or max_nfev <= 0:
+            raise ValueError("max_nfev must be a positive integer")
+        current = poses
+        evaluations = 0
+        for _ in range(max_nfev):
+            residual = self.constraint_residual(current, t)
+            evaluations += 1
+            residual_norm = _infinity_norm(residual)
+            if residual_norm <= tol:
+                return current
+            jacobian = self.constraint_jacobian(current, t)
+            rank = int(np.linalg.matrix_rank(jacobian)) if jacobian.size else 0
+            increment, *_ = np.linalg.lstsq(jacobian, -residual, rcond=None)
+            if not np.all(np.isfinite(increment)):
+                break
+            accepted = False
+            scale = 1.0
+            for _ in range(14):
+                candidate = self._apply_increments(current, scale * increment)
+                candidate_norm = _infinity_norm(self.constraint_residual(candidate, t))
+                evaluations += 1
+                if candidate_norm < residual_norm:
+                    current = candidate
+                    accepted = True
+                    break
+                scale *= 0.5
+            if not accepted:
+                break
+        residual_norm = _infinity_norm(self.constraint_residual(current, t))
+        jacobian = self.constraint_jacobian(current, t)
+        rank = int(np.linalg.matrix_rank(jacobian)) if jacobian.size else 0
+        raise MechanismSolveError(
+            "Spatial position solve failed after rank-aware minimum-norm projection: "
+            f"residual {residual_norm:.3e} exceeds {tol:.3e}; rank {rank}, "
+            f"degrees of freedom {self.ncoord - rank}, evaluations {evaluations}."
         )
-        solved = self._apply_increments(poses, solution.x)
-        residual_norm = _infinity_norm(self.constraint_residual(solved, t))
-        if not solution.success or residual_norm > tol:
-            raise MechanismSolveError(
-                "Spatial position solve failed: "
-                f"{solution.message}; residual {residual_norm:.3e} exceeds {tol:.3e}."
-            )
-        return solved
 
     def solve_velocity(
         self,
@@ -310,6 +356,8 @@ class SpatialMechanism:
         poses = self._validate_poses(poses)
         t = _finite_scalar(t, "t")
         tol = _positive_scalar(tol, "tol")
+        for drive in self._drives:
+            drive.validate_derivative(t)
         jacobian = self.constraint_jacobian(poses, t)
         time_derivative = self.constraint_time_derivative(poses, t)
         velocity, *_ = np.linalg.lstsq(jacobian, -time_derivative, rcond=None)
@@ -342,10 +390,13 @@ class SpatialMechanism:
         provenance = MappingProxyType(
             {
                 "mbsd_version": _package_version(),
-                "solver": "scipy.optimize.least_squares",
+                "solver": "rank_aware_minimum_norm_projection",
                 "velocity_solver": "numpy.linalg.lstsq",
                 "tolerance": tol,
                 "pose_increment_frame": "world",
+                "drive_derivative": "caller_supplied_checked_by_central_difference",
+                "drive_derivative_atol": DRIVE_DERIVATIVE_ATOL,
+                "drive_derivative_rtol": DRIVE_DERIVATIVE_RTOL,
             }
         )
         return SpatialKinematicResult(
@@ -357,6 +408,7 @@ class SpatialMechanism:
             success=True,
             message="converged",
             model_id=self.model_id(),
+            excitation_id=self.excitation_id(times),
             provenance=provenance,
             capabilities=self.capabilities,
         )
@@ -448,10 +500,14 @@ class SpatialMechanism:
             )
             max_velocity = max(max_velocity, _infinity_norm(velocity_residual))
             finite = finite and bool(np.all(np.isfinite(velocity_residual)))
+        linear_error, angular_error, trajectory_checked = _trajectory_velocity_error(result)
         return SpatialResultDiagnostics(
             steps=len(result.t),
             max_position_residual=_infinity_norm(result.residuals),
             max_velocity_residual=max_velocity,
+            max_trajectory_linear_velocity_error=linear_error,
+            max_trajectory_angular_velocity_error=angular_error,
+            trajectory_velocity_checked=trajectory_checked,
             finite=finite
             and bool(np.all(np.isfinite(result.linear_velocity)))
             and bool(np.all(np.isfinite(result.angular_velocity))),
@@ -489,12 +545,41 @@ class SpatialMechanism:
     def model_id(self) -> str:
         payload = self.to_spatial_model().as_dict()
         payload.pop("mbsd_version", None)
+        metadata = payload.get("metadata", {})
+        if isinstance(metadata, dict):
+            metadata.pop("drives", None)
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()[:16]
+
+    def excitation_id(self, times: Iterable[float]) -> str:
+        """Identify sampled drive behavior separately from model structure."""
+        sampled_times = _time_array(np.asarray(tuple(times), dtype=float))
+        payload = {
+            "model_id": self.model_id(),
+            "time": _vector(sampled_times),
+            "drives": [
+                {
+                    "body": drive.body,
+                    "coordinate": drive.coordinate,
+                    "value": [
+                        _finite_scalar(drive.value(float(t)), "drive value")
+                        for t in sampled_times
+                    ],
+                    "velocity": [
+                        _finite_scalar(drive.velocity(float(t)), "drive velocity")
+                        for t in sampled_times
+                    ],
+                }
+                for drive in self._drives
+            ],
+        }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()[:16]
 
     def to_dict(self) -> dict[str, Any]:
         payload = self.to_spatial_model().as_dict()
         payload["model_id"] = self.model_id()
+        payload["model_id_scope"] = "structure_excluding_runtime_drive_callbacks"
         payload["capabilities"] = _json_ready(self.capabilities)
         return payload
 
@@ -508,6 +593,7 @@ class SpatialMechanism:
             "status": "experimental",
             "dimension": 3,
             "model_id": result.model_id,
+            "excitation_id": result.excitation_id,
             "units": {
                 "length": "m",
                 "angle": "rad",
@@ -598,6 +684,8 @@ class SpatialMechanism:
             raise TypeError("result must be a SpatialKinematicResult")
         if result.model_id != self.model_id():
             raise ValueError("result model_id does not match this mechanism")
+        if result.excitation_id != self.excitation_id(result.t):
+            raise ValueError("result excitation_id does not match this mechanism and time grid")
         expected = (len(result.t), self.nbody, 3)
         if result.linear_velocity.shape != expected or result.angular_velocity.shape != expected:
             raise ValueError(f"result velocity arrays must have shape {expected}")
@@ -634,6 +722,11 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
             raise ValueError(f"spatial kinematic result missing {field_name!r}")
     if not isinstance(payload["model_id"], str) or not payload["model_id"]:
         raise ValueError("model_id must be a non-empty string")
+    excitation_id = payload.get("excitation_id")
+    if excitation_id is not None and (
+        not isinstance(excitation_id, str) or not excitation_id
+    ):
+        raise ValueError("excitation_id must be a non-empty string when present")
     for field_name in (
         "units",
         "conventions",
@@ -720,6 +813,22 @@ def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dic
             raise ValueError(f"diagnostics.{name} must be a boolean")
     if diagnostics["success"] is not payload["solver_status"]["success"]:
         raise ValueError("diagnostics.success must match solver_status.success")
+    for name in (
+        "max_trajectory_linear_velocity_error",
+        "max_trajectory_angular_velocity_error",
+    ):
+        if name in diagnostics:
+            value = diagnostics[name]
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not np.isfinite(value)
+            ):
+                raise ValueError(f"diagnostics.{name} must be a finite number")
+    if "trajectory_velocity_checked" in diagnostics and not isinstance(
+        diagnostics["trajectory_velocity_checked"], bool
+    ):
+        raise ValueError("diagnostics.trajectory_velocity_checked must be a boolean")
     try:
         return json.loads(json.dumps(payload, allow_nan=False))
     except (TypeError, ValueError) as error:
@@ -758,6 +867,33 @@ def load_spatial_kinematic_result_payload(path: str | Path) -> dict[str, Any]:
     return validate_spatial_kinematic_result_payload(
         json.loads(path.read_text(encoding="utf-8"))
     )
+
+
+def _trajectory_velocity_error(
+    result: SpatialKinematicResult,
+) -> tuple[float, float, bool]:
+    """Compare reported velocities with centered pose differences at interior steps."""
+    if len(result.t) < 3:
+        return 0.0, 0.0, False
+    max_linear = 0.0
+    max_angular = 0.0
+    for index in range(1, len(result.t) - 1):
+        duration = float(result.t[index + 1] - result.t[index - 1])
+        for body_index in range(result.linear_velocity.shape[1]):
+            previous = result.poses[index - 1][body_index]
+            following = result.poses[index + 1][body_index]
+            linear = (following.translation - previous.translation) / duration
+            relative = following.rotation.compose(previous.rotation.inverse())
+            angular = _rotation_vector(relative) / duration
+            max_linear = max(
+                max_linear,
+                _infinity_norm(linear - result.linear_velocity[index, body_index]),
+            )
+            max_angular = max(
+                max_angular,
+                _infinity_norm(angular - result.angular_velocity[index, body_index]),
+            )
+    return max_linear, max_angular, True
 
 
 def _rotation_from_vector(vector: np.ndarray) -> Quaternion:

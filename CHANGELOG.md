@@ -5,6 +5,14 @@
 - Fully validate nested poses, quaternions, body identities, diagnostics,
   capabilities, units, and conventions in spatial kinematic-result payloads.
 - Reject non-finite JSON values during result validation and writing.
+- Reject coordinate-drive velocity laws that contradict the numerical
+  derivative of their value law.
+- Report separate finite-difference consistency errors for exported linear and
+  angular velocity trajectories.
+- Define `model_id` as structural identity and add a sampled `excitation_id`
+  for runtime drive behavior.
+- Solve rectangular constrained position systems with rank-aware minimum-norm
+  world-frame projection and actionable rank/DOF failure details.
 - Preserve the `0.8.0` schema version and accept valid `0.8.0` result files.
 - Keep spatial dynamics outside the release; it remains planned for `0.9.0`.
 

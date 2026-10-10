@@ -126,7 +126,12 @@ rotational equations of motion, contact, or a broad joint catalog.
 
 MBSD `0.8.1` hardens the same experimental kinematics surface: result readers
 now validate complete pose, diagnostics, units, conventions, and capability
-records. It does not add spatial dynamics or change the schema version.
+records. Coordinate drives verify their supplied velocity against the numerical
+derivative of their value law. Results separate structural `model_id` from the
+sampled runtime `excitation_id` and report linear/angular trajectory derivative
+errors in their respective units. Rectangular position problems use a
+rank-aware minimum-norm projection. This release does not add spatial dynamics
+or change the schema version.
 
 Planar dynamics results record the integration method, tolerances, stabilization
 and projection settings, package version, and underconstraint policy in their

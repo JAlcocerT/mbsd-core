@@ -63,6 +63,9 @@ def test_spherical_pendulum_sequence_meets_position_and_velocity_tolerances():
 
     assert diagnostics.max_position_residual < 1e-8
     assert diagnostics.max_velocity_residual < 1e-8
+    assert diagnostics.max_trajectory_linear_velocity_error < 1e-5
+    assert diagnostics.max_trajectory_angular_velocity_error < 2e-5
+    assert diagnostics.trajectory_velocity_checked
     assert diagnostics.finite
     assert diagnostics.success
     np.testing.assert_allclose(
@@ -154,15 +157,60 @@ def test_inconsistent_spatial_velocity_constraints_fail_actionably():
     link = mechanism.body("link")
     mechanism.fixed(ground, link, name="attachment")
     mechanism.coordinate_drive(
-        link, "x", value=lambda _t: 0.0, velocity=lambda _t: 1.0
+        link, "x", value=lambda t: t, velocity=lambda _t: 1.0
     )
     mechanism.coordinate_drive(
-        link, "x", value=lambda _t: 0.0, velocity=lambda _t: -1.0
+        link, "x", value=lambda t: -t, velocity=lambda _t: -1.0
     )
     poses = mechanism.solve_position(tol=1e-9)
 
     with pytest.raises(MechanismSolveError, match="Spatial velocity solve failed"):
         mechanism.solve_velocity(poses, tol=1e-9)
+
+
+def test_spatial_drive_rejects_velocity_inconsistent_with_value_derivative():
+    mechanism = Mechanism.spatial()
+    body = mechanism.body("body")
+    mechanism.coordinate_drive(
+        body, "x", value=lambda t: 0.2 * t, velocity=lambda _t: 0.0
+    )
+    poses = mechanism.solve_position(t=0.5)
+
+    with pytest.raises(ValueError, match="velocity is inconsistent"):
+        mechanism.solve_velocity(poses, t=0.5)
+
+
+def test_spatial_model_and_excitation_identity_have_distinct_scopes():
+    first = Mechanism.spatial()
+    first_body = first.body("body")
+    first.coordinate_drive(
+        first_body, "x", value=lambda t: t, velocity=lambda _t: 1.0
+    )
+    second = Mechanism.spatial()
+    second_body = second.body("body")
+    second.coordinate_drive(
+        second_body, "x", value=lambda t: 2.0 * t, velocity=lambda _t: 2.0
+    )
+    times = np.array([0.0, 0.5, 1.0])
+
+    assert first.model_id() == second.model_id()
+    assert first.excitation_id(times) != second.excitation_id(times)
+    assert first.to_dict()["model_id_scope"] == (
+        "structure_excluding_runtime_drive_callbacks"
+    )
+
+
+def test_highly_underconstrained_spatial_projection_uses_minimum_norm_step():
+    mechanism = Mechanism.spatial()
+    body = mechanism.body("free")
+    mechanism.coordinate_drive(
+        body, "x", value=lambda t: t, velocity=lambda _t: 1.0
+    )
+
+    solved = mechanism.solve_position(t=0.5)
+
+    np.testing.assert_allclose(solved[0].translation, [0.5, 0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(solved[0].rotation.as_array(), [1.0, 0.0, 0.0, 0.0])
 
 
 def test_spatial_result_schema_round_trip_preserves_contract(tmp_path):
@@ -177,11 +225,13 @@ def test_spatial_result_schema_round_trip_preserves_contract(tmp_path):
 
     assert payload == json.loads(path.read_text(encoding="utf-8"))
     assert payload["model_id"] == mechanism.model_id()
+    assert payload["excitation_id"] == mechanism.excitation_id(result.t)
     assert payload["solver_status"] == {"success": True, "message": "converged"}
     assert payload["units"]["angular_velocity"] == "rad/s"
     assert payload["conventions"]["velocity_frame"] == "world"
     assert payload["bodies"][1]["name"] == "link"
     assert len(payload["bodies"][1]["poses"]) == 2
+    assert payload["diagnostics"]["trajectory_velocity_checked"] is False
 
     payload["mbsd_version"] = "0.8.0"
     assert validate_spatial_kinematic_result_payload(payload)["mbsd_version"] == "0.8.0"
