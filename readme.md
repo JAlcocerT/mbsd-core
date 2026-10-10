@@ -11,8 +11,8 @@ declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
 The stable solver API is intentionally focused on **2D planar mechanisms**.
-Core also contains an experimental spatial data vocabulary, but not a 3D
-solver. Plotting, gallery, browser UI, larger synthesis workflows, and
+Core also contains an experimental constrained spatial-kinematics builder, but
+not a spatial dynamics solver. Plotting, gallery, browser UI, larger synthesis workflows, and
 CAD-specific integrations remain separate while the API stabilizes. Portable
 JSON and CSV exports support downstream applications and neutral CAD handoffs.
 
@@ -21,7 +21,7 @@ JSON and CSV exports support downstream applications and neutral CAD handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.6.0
+git checkout v0.8.0
 uv sync --extra dev
 ```
 
@@ -87,6 +87,8 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
 - Per-configuration solver diagnostics with explicit model classification.
 - Experimental spatial transforms, point velocities, and joint residuals in
   `0.7.0`.
+- Experimental `Mechanism.spatial()` position/velocity solves, rank diagnostics,
+  result provenance, and versioned kinematic-result exports in `0.8.0`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
@@ -113,9 +115,14 @@ MBSD `0.7.0` adds point transforms and velocities, pose composition and
 inversion, frame-pose resolution, spherical/fixed-joint residuals, and
 finite-difference residual Jacobians. Angular velocity and Jacobian rotation
 increments are world-expressed. Spatial schema v2 advertises these capabilities
-and explicitly reports that no general spatial solver or dynamics is available.
-These helpers evaluate supplied poses; they do not provide a general spatial
-position, velocity, or acceleration solver. The namespace remains experimental.
+and explicitly distinguishes residual helpers from solved spatial results.
+
+MBSD `0.8.0` adds `Mechanism.spatial()` for small constrained position and
+velocity problems with spherical and fixed joints. The builder uses stable body
+and frame handles, reports Jacobian rank and degrees of freedom, exports
+identity-linked results, and converts explicitly to the portable `SpatialModel`
+description. It remains experimental and does not expose spatial dynamics,
+rotational equations of motion, contact, or a broad joint catalog.
 
 Planar dynamics results record the integration method, tolerances, stabilization
 and projection settings, package version, and underconstraint policy in their

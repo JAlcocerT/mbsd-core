@@ -5,6 +5,18 @@ structures and early kinematics helpers before the public 3D solver APIs are
 stabilized.
 """
 
+from .builder import (
+    SpatialBodyHandle,
+    SpatialCoordinateDrive,
+    SpatialFrameHandle,
+    SpatialKinematicResult,
+    SpatialMechanism,
+    SpatialModelDiagnostics,
+    SpatialResultDiagnostics,
+    load_spatial_kinematic_result_payload,
+    validate_spatial_kinematic_result_payload,
+)
+
 from .kinematics import (
     compose_pose,
     fixed_joint_descriptor_residual,
@@ -39,6 +51,13 @@ __all__ = [
     "Pose3D",
     "Quaternion",
     "SphericalJoint3D",
+    "SpatialBodyHandle",
+    "SpatialCoordinateDrive",
+    "SpatialFrameHandle",
+    "SpatialKinematicResult",
+    "SpatialMechanism",
+    "SpatialModelDiagnostics",
+    "SpatialResultDiagnostics",
     "SpatialBody",
     "SpatialModel",
     "SPATIAL_MODEL_SCHEMA",
@@ -49,6 +68,7 @@ __all__ = [
     "inverse_pose",
     "joint_residual_jacobian",
     "load_spatial_model_payload",
+    "load_spatial_kinematic_result_payload",
     "max_spatial_residual",
     "point_position",
     "point_velocity",
@@ -57,4 +77,5 @@ __all__ = [
     "spherical_joint_descriptor_residual",
     "spherical_joint_residual",
     "validate_spatial_model_payload",
+    "validate_spatial_kinematic_result_payload",
 ]

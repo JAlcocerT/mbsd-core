@@ -1,8 +1,8 @@
 {
-  "release": "0.7.0",
-  "core_ref": "v0.7.0",
-  "examples_ref": "v0.7.0",
-  "examples_core_range": ">=0.7,<0.8",
+  "release": "0.8.0",
+  "core_ref": "v0.8.0",
+  "examples_ref": "v0.8.0",
+  "examples_core_range": ">=0.8,<0.9",
   "schemas": {
     "mbsd.planar.mechanism": {
       "emitted": 1
@@ -16,6 +16,10 @@
     "mbsd.spatial.model": {
       "emitted": 2,
       "readable": [1, 2]
+    },
+    "mbsd.spatial.kinematic_result": {
+      "emitted": 1,
+      "readable": [1]
     }
   }
 }

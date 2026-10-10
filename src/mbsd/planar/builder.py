@@ -166,6 +166,13 @@ class Mechanism:
     def planar(gravity: ArrayLike2 = (0.0, -9.81)) -> "PlanarMechanism":
         return PlanarMechanism(gravity=gravity)
 
+    @staticmethod
+    def spatial():
+        """Return the experimental constrained spatial-kinematics builder."""
+        from ..spatial import SpatialMechanism
+
+        return SpatialMechanism()
+
 
 class PlanarMechanism:
     """Declarative builder over the 2D reference-coordinate kernel.

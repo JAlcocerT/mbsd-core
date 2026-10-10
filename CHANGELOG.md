@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.8.0 - Constrained Spatial Kinematics
+
+- Add the experimental `Mechanism.spatial()` builder with stable body and frame
+  handles.
+- Add canonical spherical and fixed-joint construction without duplicating the
+  portable spatial vocabulary.
+- Add position and velocity constraint solves using world-frame pose increments.
+- Add rank, degree-of-freedom, singularity, position-residual, and
+  velocity-residual diagnostics.
+- Add `SpatialKinematicResult` with solver status, provenance, capability
+  metadata, model identity, poses, and world-expressed velocities.
+- Add versioned spatial kinematic-result JSON exports and a validating reader.
+- Add explicit conversion between `SpatialMechanism` and portable
+  `SpatialModel` descriptions.
+- Keep spatial dynamics, rotational equations of motion, contact, and a broad
+  joint catalog outside this release.
+
 ## v0.7.0 - Spatial Kinematics Preview
 
 - Add experimental spatial point-position, pose-composition, and pose-inverse
