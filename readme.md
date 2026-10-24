@@ -11,17 +11,19 @@ declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
 The stable solver API is intentionally focused on **2D planar mechanisms**.
-Core also contains an experimental constrained spatial-kinematics builder, but
-not a spatial dynamics solver. Plotting, gallery, browser UI, larger synthesis workflows, and
-CAD-specific integrations remain separate while the API stabilizes. Portable
-JSON and CSV exports support downstream applications and neutral CAD handoffs.
+Core also contains experimental constrained spatial kinematics and a narrowly
+named fixed-orientation translational-dynamics preview. It is not yet a coupled
+six-DOF rigid-body solver. Plotting, gallery, browser UI, larger synthesis
+workflows, and CAD-specific integrations remain separate while the API
+stabilizes. Portable JSON and CSV exports support downstream applications and
+neutral CAD handoffs.
 
 ## Install
 
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.8.1
+git checkout v0.9.1
 uv sync --extra dev
 ```
 
@@ -89,6 +91,8 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
   `0.7.0`.
 - Experimental `Mechanism.spatial()` position/velocity solves, rank diagnostics,
   result provenance, and versioned kinematic-result exports in `0.8.0`.
+- Experimental fixed-orientation spatial translational dynamics, force and
+  reaction histories, three-level residuals, and versioned exports in `0.9.1`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
@@ -133,12 +137,44 @@ errors in their respective units. Rectangular position problems use a
 rank-aware minimum-norm projection. This release does not add spatial dynamics
 or change the schema version.
 
+## Fixed-Orientation Spatial Translational Dynamics
+
+MBSD `0.9.1` adds a deliberately restricted translational solver. Positions,
+velocities, accelerations, and forces are world-expressed; orientations remain
+constant. Forces act at each body's coincident reference point and center of
+mass. Torque inputs, offset forces, changing quaternions, rotational equations,
+contact, and general six-DOF dynamics are rejected or unavailable.
+
+```python
+import numpy as np
+
+from mbsd import Mechanism
+
+m = Mechanism.spatial()
+payload = m.body("payload", mass=2.0)
+thrust = m.force(payload, (2.0, 0.0, 0.0), name="thrust")
+result = m.simulate_fixed_orientation(
+    np.linspace(0.0, 1.0, 51),
+    forces=(thrust,),
+)
+print(m.dynamics_diagnostics(result).as_dict())
+m.dynamics_result_to_json(result, "fixed-orientation-result.json")
+```
+
+Coordinate drives accept `value`, `velocity`, and an optional `acceleration`.
+Dynamics uses the supplied acceleration after checking it against velocity, or
+derives it with the same adaptive multi-step policy used by the velocity guard.
+The dynamic result records the integration tolerances, sample projection,
+multiplier equation, physical reaction sign, solver kind, and unsupported
+rotational capabilities.
+
 Planar dynamics uses the saddle-multiplier convention
 `M @ a + Cq.T @ lambda = Q`; exported generalized constraint reactions are the
-physical `-Cq.T @ lambda`. Rotating-frame loads include centrifugal, Coriolis,
-and Euler pseudo-forces evaluated from world COM position and rotating-frame
-velocity; angular frame acceleration also contributes the planar Euler torque
-`-I*alpha`.
+physical `-Cq.T @ lambda`. `rotating_frame_pseudo_forces()` includes
+centrifugal, Coriolis, and Euler terms. Its body positions, velocities, rotation
+origin, gravity, constraints, user loads, and returned force components are all
+expressed in the same rotating XYZ basis; the origin defaults to `(0, 0)`.
+Angular frame acceleration also contributes the planar Euler torque `-I*alpha`.
 
 Planar dynamics results record the integration method, tolerances, stabilization
 and projection settings, package version, and underconstraint policy in their

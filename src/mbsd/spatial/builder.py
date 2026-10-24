@@ -13,6 +13,14 @@ from typing import Any, Callable, Iterable, Mapping
 import numpy as np
 from ..errors import MechanismSolveError
 from .kinematics import joint_residual_jacobian
+from .dynamics import (
+    SpatialDynamicsResult,
+    SpatialForce,
+    dynamic_result_to_dict,
+    dynamic_result_to_json,
+    dynamics_diagnostics,
+    simulate_fixed_orientation,
+)
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
@@ -55,35 +63,65 @@ class SpatialFrameHandle:
 
 @dataclass(frozen=True)
 class SpatialCoordinateDrive:
-    """Prescribed world translation coordinate and its time derivative."""
+    """Prescribed world translation coordinate and its time derivatives.
+
+    ``acceleration`` is optional for kinematics.  Fixed-orientation dynamics
+    uses it when supplied and otherwise derives it adaptively from ``velocity``.
+    """
 
     body: int
     coordinate: str
     value: Callable[[float], float]
     velocity: Callable[[float], float]
+    acceleration: Callable[[float], float] | None = None
 
     def residual(self, poses: tuple[Pose3D, ...], t: float) -> float:
         axis = {"x": 0, "y": 1, "z": 2}[self.coordinate]
         return float(poses[self.body].translation[axis] - self.value(t))
 
-    def validate_derivative(self, t: float) -> None:
-        """Reject a velocity callback inconsistent with the value callback."""
+    def validate_derivative(self, t: float) -> str:
+        """Validate velocity with a converged, scale-aware derivative estimate."""
         t = _finite_scalar(t, "t")
-        step = 1e-5 * max(1.0, abs(t))
-        forward = _finite_scalar(self.value(t + step), "drive value")
-        backward = _finite_scalar(self.value(t - step), "drive value")
-        numeric = (forward - backward) / (2.0 * step)
         analytic = _finite_scalar(self.velocity(t), "drive velocity")
+        numeric, uncertainty, converged = _adaptive_derivative(
+            self.value, t, "drive value"
+        )
         tolerance = DRIVE_DERIVATIVE_ATOL + DRIVE_DERIVATIVE_RTOL * max(
             abs(numeric), abs(analytic)
         )
-        if abs(numeric - analytic) > tolerance:
+        difference = abs(numeric - analytic)
+        if converged and difference > max(tolerance, 8.0 * uncertainty):
             raise ValueError(
                 f"coordinate drive {self.coordinate!r} velocity is inconsistent with "
                 f"the derivative of its value law at t={t:g}: "
                 f"reported {analytic:.6g}, numerical derivative {numeric:.6g}, "
                 f"tolerance {tolerance:.3e}"
             )
+        return "validated" if converged else "inconclusive"
+
+    def acceleration_value(self, t: float) -> float:
+        """Return supplied acceleration or an adaptive derivative of velocity."""
+        t = _finite_scalar(t, "t")
+        if self.acceleration is None:
+            estimate, _, _ = _adaptive_derivative(
+                self.velocity, t, "drive velocity"
+            )
+            return estimate
+        analytic = _finite_scalar(self.acceleration(t), "drive acceleration")
+        numeric, uncertainty, converged = _adaptive_derivative(
+            self.velocity, t, "drive velocity"
+        )
+        tolerance = DRIVE_DERIVATIVE_ATOL + DRIVE_DERIVATIVE_RTOL * max(
+            abs(numeric), abs(analytic)
+        )
+        if converged and abs(numeric - analytic) > max(tolerance, 8.0 * uncertainty):
+            raise ValueError(
+                f"coordinate drive {self.coordinate!r} acceleration is inconsistent with "
+                f"the derivative of its velocity law at t={t:g}: reported "
+                f"{analytic:.6g}, numerical derivative {numeric:.6g}, "
+                f"tolerance {tolerance:.3e}"
+            )
+        return analytic
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +130,11 @@ class SpatialCoordinateDrive:
             "coordinate": self.coordinate,
             "value": getattr(self.value, "__name__", "callable"),
             "velocity": getattr(self.velocity, "__name__", "callable"),
+            "acceleration": (
+                None
+                if self.acceleration is None
+                else getattr(self.acceleration, "__name__", "callable")
+            ),
         }
 
 
@@ -110,6 +153,12 @@ class SpatialKinematicResult:
     excitation_id: str
     provenance: Mapping[str, Any] = field(default_factory=dict)
     capabilities: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "t", _readonly_array(self.t))
+        object.__setattr__(self, "linear_velocity", _readonly_array(self.linear_velocity))
+        object.__setattr__(self, "angular_velocity", _readonly_array(self.angular_velocity))
+        object.__setattr__(self, "residuals", _readonly_array(self.residuals))
 
     def body_poses(self, body: int | SpatialBodyHandle) -> tuple[Pose3D, ...]:
         index = body.index if isinstance(body, SpatialBodyHandle) else int(body)
@@ -205,6 +254,7 @@ class SpatialMechanism:
                 "position_solve": True,
                 "velocity_solve": True,
                 "spatial_dynamics": False,
+                "fixed_orientation_translational_dynamics": True,
                 "joint_types": ("spherical", "fixed"),
                 "velocity_frame": "world",
             }
@@ -295,12 +345,17 @@ class SpatialMechanism:
         *,
         value: Callable[[float], float],
         velocity: Callable[[float], float],
+        acceleration: Callable[[float], float] | None = None,
     ) -> SpatialCoordinateDrive:
         if coordinate not in {"x", "y", "z"}:
             raise ValueError("coordinate must be one of: x, y, z")
         if not callable(value) or not callable(velocity):
             raise TypeError("value and velocity must be callable")
-        drive = SpatialCoordinateDrive(self._idx(body), coordinate, value, velocity)
+        if acceleration is not None and not callable(acceleration):
+            raise TypeError("acceleration must be callable when supplied")
+        drive = SpatialCoordinateDrive(
+            self._idx(body), coordinate, value, velocity, acceleration
+        )
         self._drives.append(drive)
         return drive
 
@@ -402,7 +457,7 @@ class SpatialMechanism:
                 "velocity_solver": "numpy.linalg.lstsq",
                 "tolerance": tol,
                 "pose_increment_frame": "world",
-                "drive_derivative": "caller_supplied_checked_by_central_difference",
+                "drive_derivative": "caller_supplied_checked_by_adaptive_richardson",
                 "drive_derivative_atol": DRIVE_DERIVATIVE_ATOL,
                 "drive_derivative_rtol": DRIVE_DERIVATIVE_RTOL,
             }
@@ -420,6 +475,62 @@ class SpatialMechanism:
             provenance=provenance,
             capabilities=self.capabilities,
         )
+
+    def force(
+        self,
+        body: int | SpatialBodyHandle,
+        vector: np.ndarray | Callable[[float, tuple[Pose3D, ...], np.ndarray], ArrayLike3],
+        *,
+        name: str = "force",
+        frame: str = "world",
+        application_point: str = "center_of_mass",
+    ) -> SpatialForce:
+        """Create a validated force for fixed-orientation dynamics."""
+        return SpatialForce(
+            body=self._idx(body),
+            vector=vector,
+            name=name,
+            frame=frame,
+            application_point=application_point,
+        )
+
+    def simulate_fixed_orientation(
+        self,
+        t: np.ndarray,
+        *,
+        poses0: Iterable[Pose3D] | None = None,
+        linear_velocity0: np.ndarray | None = None,
+        forces: Iterable[SpatialForce] = (),
+        method: str = "DOP853",
+        rtol: float = 1e-9,
+        atol: float = 1e-11,
+        constraint_tol: float = 1e-8,
+        project_samples: bool = True,
+    ) -> SpatialDynamicsResult:
+        """Run the restricted translational solver with constant orientations."""
+        return simulate_fixed_orientation(
+            self,
+            t,
+            poses0=poses0,
+            linear_velocity0=linear_velocity0,
+            forces=forces,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            constraint_tol=constraint_tol,
+            project_samples=project_samples,
+        )
+
+    def dynamics_diagnostics(self, result: SpatialDynamicsResult):
+        return dynamics_diagnostics(self, result)
+
+    def dynamics_result_to_dict(self, result: SpatialDynamicsResult) -> dict[str, Any]:
+        return dynamic_result_to_dict(self, result)
+
+    def dynamics_result_to_json(
+        self, result: SpatialDynamicsResult, path: str | Path, *, indent: int = 2
+    ) -> Path:
+        return dynamic_result_to_json(self, result, path, indent=indent)
 
     def constraint_residual(
         self, poses: Iterable[Pose3D], t: float = 0.0
@@ -512,10 +623,8 @@ class SpatialMechanism:
             max_trajectory_linear_velocity_error=linear_error,
             max_trajectory_angular_velocity_error=angular_error,
             trajectory_velocity_checked=trajectory_checked,
-            finite=bool(np.all(np.isfinite(velocity_residuals)))
-            and bool(np.all(np.isfinite(result.linear_velocity)))
-            and bool(np.all(np.isfinite(result.angular_velocity))),
-            success=result.success,
+            finite=True,
+            success=bool(result.success),
         )
 
     def _velocity_residuals(self, result: SpatialKinematicResult) -> np.ndarray:
@@ -718,6 +827,17 @@ class SpatialMechanism:
         expected = (len(result.t), self.nbody, 3)
         if result.linear_velocity.shape != expected or result.angular_velocity.shape != expected:
             raise ValueError(f"result velocity arrays must have shape {expected}")
+        expected_residuals = (len(self._residual_layout()), len(result.t))
+        if result.residuals.shape != expected_residuals:
+            raise ValueError(f"result residuals must have shape {expected_residuals}")
+        if len(result.poses) != len(result.t) or any(
+            len(step) != self.nbody for step in result.poses
+        ):
+            raise ValueError("result pose history must match time and body counts")
+        arrays = [result.t, result.linear_velocity, result.angular_velocity, result.residuals]
+        arrays.extend(pose.translation for step in result.poses for pose in step)
+        if not all(np.all(np.isfinite(value)) for value in arrays):
+            raise ValueError("result arrays and pose translations must contain only finite values")
 
 
 def validate_spatial_kinematic_result_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1073,6 +1193,60 @@ def _finite_scalar(value: float, name: str) -> float:
     if not np.isfinite(value):
         raise ValueError(f"{name} must be finite")
     return value
+
+
+def _adaptive_derivative(
+    function: Callable[[float], float], t: float, value_name: str
+) -> tuple[float, float, bool]:
+    """Estimate a first derivative without tying the step to absolute time.
+
+    Central differences are refined and Richardson-extrapolated.  The lower
+    step bound follows floating-point spacing at ``t``; the nominal step uses
+    the cube root of machine epsilon, appropriate for a first derivative.
+    """
+    spacing = abs(float(np.spacing(t)))
+    base = max(float(np.cbrt(np.finfo(float).eps)), 16.0 * spacing)
+    # Start wide enough to survive representable-time quantization at large
+    # absolute times, then refine far enough for high-frequency laws.
+    steps = [base * (2.0**power) for power in range(10, -4, -1)]
+    estimates: list[tuple[float, float]] = []
+    for step in steps:
+        if t + step == t or t - step == t:
+            continue
+        forward_time = t + step
+        backward_time = t - step
+        forward = _finite_scalar(function(forward_time), value_name)
+        backward = _finite_scalar(function(backward_time), value_name)
+        actual_span = forward_time - backward_time
+        derivative = (forward - backward) / actual_span
+        roundoff = (
+            8.0
+            * np.finfo(float).eps
+            * max(1.0, abs(forward), abs(backward))
+            / actual_span
+        )
+        estimates.append((derivative, roundoff))
+    if len(estimates) < 2:
+        raise ValueError(f"numerical derivative check for {value_name} is inconclusive")
+    candidates: list[tuple[float, float]] = []
+    for (coarse, _), (fine, roundoff) in zip(estimates, estimates[1:]):
+        truncation = abs(fine - coarse) / 3.0
+        richardson = fine + (fine - coarse) / 3.0
+        candidates.append((richardson, truncation + roundoff))
+    usable = candidates
+    for index in range(2, len(candidates)):
+        if candidates[index][1] > 4.0 * candidates[index - 1][1]:
+            usable = candidates[:index]
+            break
+    numeric, uncertainty = min(usable, key=lambda item: item[1])
+    scale = max(1.0, abs(numeric))
+    converged = uncertainty <= max(DRIVE_DERIVATIVE_ATOL, DRIVE_DERIVATIVE_RTOL * scale)
+    return float(numeric), float(uncertainty), bool(converged)
+
+
+def _readonly_array(value: Any) -> np.ndarray:
+    array = np.array(value, dtype=float, copy=True)
+    return np.frombuffer(array.tobytes(), dtype=array.dtype).reshape(array.shape)
 
 
 def _positive_scalar(value: float, name: str) -> float:

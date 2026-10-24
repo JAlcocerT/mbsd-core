@@ -623,8 +623,8 @@ def surface_contact_forces(mbody, q, v, surface_contacts):
     return Q
 
 
-def centrifugal_forces(mbody, q, omega, alpha=None, v=None):
-    """Compute pseudo-forces for rotating/accelerating reference frame.
+def rotating_frame_pseudo_forces(mbody, q, omega, alpha=None, v=None, origin=(0.0, 0.0)):
+    """Compute all planar pseudo-forces in rotating-frame coordinates.
 
     When the reference frame rotates with angular velocity ω and
     angular acceleration α, all bodies experience:
@@ -634,13 +634,18 @@ def centrifugal_forces(mbody, q, omega, alpha=None, v=None):
 
     Args:
         mbody: MBody mechanism definition
-        q: coordinate vector containing body world positions
+        q: body reference-point coordinates expressed in rotating axes
         omega: angular velocity (scalar in 2D)
         alpha: angular acceleration (scalar in 2D, optional)
-        v: coordinate-rate vector in the rotating frame (optional; zero when omitted)
+        v: coordinate-rate vector expressed in rotating axes (optional; zero when omitted)
+        origin: rotation origin, expressed in rotating axes (default frame origin)
 
     Returns:
-        Q_centrifugal: (ncoord,) vector of pseudo-forces
+        generalized forces expressed in the same rotating axes as ``q``
+
+    Gravity, constraints, user loads, ``q``, and ``v`` must all use this same
+    rotating-coordinate basis when this helper is used.  Body reference points
+    must coincide with their centers of mass, as required by planar dynamics.
     """
     if alpha is None:
         alpha = 0.0
@@ -648,12 +653,15 @@ def centrifugal_forces(mbody, q, omega, alpha=None, v=None):
     velocity = np.zeros_like(q) if v is None else np.asarray(v, dtype=float)
     if q.shape != (mbody.ncoord,) or velocity.shape != (mbody.ncoord,):
         raise ValueError(f"q and v must have shape ({mbody.ncoord},)")
+    origin = np.asarray(origin, dtype=float)
+    if origin.shape != (2,) or not np.all(np.isfinite(origin)):
+        raise ValueError("origin must be a finite vector with shape (2,)")
 
     Q_centrifugal = np.zeros(mbody.ncoord)
 
     for i in range(mbody.nb):
         m_i = mbody.bodies[i].mass
-        position = q[3 * i : 3 * i + 2]
+        position = q[3 * i : 3 * i + 2] - origin
         linear_velocity = velocity[3 * i : 3 * i + 2]
 
         # In 2D, ω = ω_z (scalar), represented as [0, 0, ω_z]
@@ -676,6 +684,13 @@ def centrifugal_forces(mbody, q, omega, alpha=None, v=None):
         Q_centrifugal[3 * i + 2] = -mbody.bodies[i].inertia * alpha
 
     return Q_centrifugal
+
+
+def centrifugal_forces(mbody, q, omega, alpha=None, v=None, origin=(0.0, 0.0)):
+    """Backward-compatible alias for :func:`rotating_frame_pseudo_forces`."""
+    return rotating_frame_pseudo_forces(
+        mbody, q, omega, alpha=alpha, v=v, origin=origin
+    )
 
 
 def potential_energy(mbody, q, g=None, springs=None):

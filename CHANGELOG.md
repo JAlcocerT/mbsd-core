@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.9.1 - Fixed-Orientation Spatial Translational Dynamics
+
+- Add an explicitly restricted fixed-orientation translational dynamics solver
+  using bounded SciPy integration and Lagrange-multiplier acceleration solves.
+- Support validated world-frame forces applied at coincident body reference
+  points and centers of mass; reject body-frame loads, offsets, and torques.
+- Add supplied-or-adaptively-derived coordinate-drive acceleration laws.
+- Export immutable dynamic results with applied forces, physical reactions,
+  multipliers, and position-, velocity-, and acceleration-level residuals.
+- Add a strict versioned dynamic-result JSON contract and capability flags that
+  explicitly reject orientation dynamics and torque inputs.
+- Make drive derivative validation adaptive across high-frequency and
+  large-absolute-time laws.
+- Make spatial in-memory results deeply read-only at their NumPy boundaries and
+  validate residual, time, velocity, and pose-history consistency.
+- Define planar rotating-frame positions, velocities, gravity, constraints,
+  loads, origin, and returned forces in one rotating-coordinate basis; rename
+  the complete helper while preserving the former compatibility alias.
+- Validate the restricted solver against analytic constant-force and prescribed
+  acceleration cases, plus an independently transformed rotating-frame path.
+- Keep quaternion integration, torque response, coupled rotational equations,
+  contact, and general six-DOF rigid-body dynamics outside this release.
+
+## v0.9.0 - Empty Release Correction
+
+- The published `v0.9.0` tag accidentally referenced the same source commit as
+  `v0.8.1`; it did not contain the spatial dynamics changes announced in its
+  GitHub release notes.
+- Version `v0.9.1` is the first release containing those changes. The `v0.9.0`
+  tag remains unchanged to preserve public release history.
+
 ## v0.8.1 - Spatial Kinematics Hardening
 
 - Fully validate nested poses, quaternions, body identities, diagnostics,

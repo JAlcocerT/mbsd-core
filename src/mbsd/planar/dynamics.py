@@ -22,7 +22,7 @@ from .solver import solve_position, solve_velocity, solve_acceleration_with_lagr
 
 from .forces import (
     mass_matrix, gravity_forces, spring_damper_forces,
-    centrifugal_forces, potential_energy, kinetic_energy,
+    rotating_frame_pseudo_forces, potential_energy, kinetic_energy,
     ground_contact_forces, surface_contact_forces,
 )
 
@@ -67,7 +67,7 @@ def assemble_system(mbody, q, v, t, springs=None, Q_user=None,
 
     Q_grav = gravity_forces(mbody, q)
     Q_spring = spring_damper_forces(mbody, q, v, springs)
-    Q_centrifugal = centrifugal_forces(mbody, q, omega, alpha, v=v)
+    Q_centrifugal = rotating_frame_pseudo_forces(mbody, q, omega, alpha, v=v)
     Q_contact = ground_contact_forces(mbody, q, v, contacts) if contacts else np.zeros(mbody.ncoord)
     Q_surf = (surface_contact_forces(mbody, q, v, surface_contacts)
               if surface_contacts else np.zeros(mbody.ncoord))

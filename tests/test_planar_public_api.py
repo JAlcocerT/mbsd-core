@@ -452,7 +452,7 @@ def test_lower_level_rk45_preserves_free_body_velocity():
     np.testing.assert_allclose(reactions, 0.0, atol=1e-10)
 
 
-def test_rotating_frame_pseudo_forces_use_world_position_velocity_and_signs():
+def test_rotating_frame_pseudo_forces_use_one_rotating_basis_and_physical_signs():
     model = MBody()
     model.bodies.append(Body("body", mass=2.0, inertia=1.0))
     q = np.array([3.0, 4.0, 0.0])
@@ -476,6 +476,36 @@ def test_rotating_frame_pseudo_forces_use_world_position_velocity_and_signs():
     assert centrifugal_forces(
         torque_model, np.zeros(3), omega=0.0, alpha=3.0
     )[2] == pytest.approx(-15.0)
+
+
+def test_rotating_frame_free_particle_matches_transformed_inertial_trajectory():
+    from scipy.integrate import solve_ivp
+    from mbsd.planar.forces import rotating_frame_pseudo_forces
+
+    model = MBody()
+    model.bodies.append(Body("particle", mass=1.0, inertia=1.0))
+    omega = 2.0
+    initial_q = np.array([1.0, 0.0, 0.0])
+    initial_v = np.array([0.0, -omega, 0.0])
+
+    def rhs(t, state):
+        q = state[:3]
+        v = state[3:]
+        force = rotating_frame_pseudo_forces(model, q, omega, v=v)
+        return np.concatenate((v, force))
+
+    times = np.linspace(0.0, 1.0, 51)
+    solution = solve_ivp(
+        rhs,
+        (times[0], times[-1]),
+        np.concatenate((initial_q, initial_v)),
+        t_eval=times,
+        rtol=1e-11,
+        atol=1e-13,
+    )
+    expected = np.column_stack((np.cos(omega * times), -np.sin(omega * times)))
+
+    np.testing.assert_allclose(solution.y[:2].T, expected, atol=2e-10)
 
 
 def test_point_on_line_uses_body_j_line_direction_and_perpendicular_distance():

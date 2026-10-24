@@ -1,8 +1,8 @@
 {
-  "release": "0.8.1",
-  "core_ref": "v0.8.1",
-  "examples_ref": "v0.8.1",
-  "examples_core_range": ">=0.8.1,<0.9",
+  "release": "0.9.1",
+  "core_ref": "v0.9.1",
+  "examples_ref": "v0.9.1",
+  "examples_core_range": ">=0.9.1,<0.10",
   "schemas": {
     "mbsd.planar.mechanism": {
       "emitted": 1
@@ -25,6 +25,12 @@
       "emitted": 1,
       "readable": [1],
       "validation": "structural_and_semantic"
+    },
+    "mbsd.spatial.fixed_orientation_dynamic_result": {
+      "emitted": 1,
+      "readable": [1],
+      "validation": "structural_and_semantic",
+      "capability": "fixed_orientation_translational_dynamics"
     }
   }
 }

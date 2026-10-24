@@ -8,6 +8,7 @@ from mbsd.spatial import (
     Pose3D,
     Quaternion,
     SpatialMechanism,
+    load_spatial_dynamic_result_payload,
     load_spatial_kinematic_result_payload,
     validate_spatial_kinematic_result_payload,
 )
@@ -182,6 +183,106 @@ def test_spatial_drive_rejects_velocity_inconsistent_with_value_derivative():
 
     with pytest.raises(ValueError, match="velocity is inconsistent"):
         mechanism.solve_velocity(poses, t=0.5)
+
+
+@pytest.mark.parametrize(
+    ("frequency", "time"),
+    [(1000.0, 0.0), (1.0, 1.0e9), (10.0, 1.0e8)],
+)
+def test_spatial_drive_derivative_guard_accepts_scaled_exact_laws(frequency, time):
+    mechanism = Mechanism.spatial()
+    body = mechanism.body("body")
+    drive = mechanism.coordinate_drive(
+        body,
+        "x",
+        value=lambda t: np.sin(frequency * t),
+        velocity=lambda t: frequency * np.cos(frequency * t),
+    )
+
+    assert drive.validate_derivative(time) == "validated"
+
+
+def test_spatial_result_arrays_are_read_only_and_validation_is_comprehensive():
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    link = mechanism.body("link")
+    mechanism.fixed(ground, link)
+    result = mechanism.solve_kinematics(np.array([0.0, 0.1, 0.2]))
+
+    with pytest.raises(ValueError, match="read-only"):
+        result.residuals[0, 0] = np.nan
+    with pytest.raises(ValueError, match="read-only"):
+        result.t[0] = np.nan
+    with pytest.raises(ValueError, match="read-only"):
+        result.linear_velocity[0, 0, 0] = np.nan
+    with pytest.raises(ValueError, match="read-only"):
+        result.poses[0][0].translation[0] = np.nan
+
+    diagnostics = mechanism.result_diagnostics(result)
+    assert diagnostics.finite
+    assert diagnostics.success
+
+
+def test_fixed_orientation_dynamics_matches_constant_force_solution(tmp_path):
+    mechanism = Mechanism.spatial()
+    body = mechanism.body("mass", mass=2.0)
+    force = mechanism.force(body, (2.0, 0.0, 0.0), name="thrust")
+    times = np.linspace(0.0, 1.0, 21)
+
+    result = mechanism.simulate_fixed_orientation(times, forces=(force,))
+    diagnostics = mechanism.dynamics_diagnostics(result)
+    payload = mechanism.dynamics_result_to_dict(result)
+    path = mechanism.dynamics_result_to_json(result, tmp_path / "dynamic-result.json")
+
+    np.testing.assert_allclose(
+        [pose.translation[0] for pose in result.body_poses(body)],
+        0.5 * times**2,
+        atol=2e-9,
+    )
+    np.testing.assert_allclose(result.body_linear_velocity(body)[:, 0], times, atol=2e-9)
+    assert diagnostics.max_force_balance_residual_n < 1e-12
+    assert payload["solver_kind"] == "fixed_orientation_translational_dynamics"
+    assert payload["capabilities"]["orientation_dynamics"] is False
+    assert path.exists()
+    assert load_spatial_dynamic_result_payload(path)["model_id"] == mechanism.model_id()
+
+
+def test_fixed_orientation_dynamics_enforces_acceleration_drive_and_reaction():
+    mechanism = Mechanism.spatial()
+    body = mechanism.body("driven", mass=2.0)
+    mechanism.coordinate_drive(
+        body,
+        "x",
+        value=lambda t: t * t,
+        velocity=lambda t: 2.0 * t,
+        acceleration=lambda _t: 2.0,
+    )
+
+    result = mechanism.simulate_fixed_orientation(np.linspace(0.0, 1.0, 11))
+    diagnostics = mechanism.dynamics_diagnostics(result)
+
+    np.testing.assert_allclose(result.body_poses(body)[-1].translation[0], 1.0, atol=1e-10)
+    np.testing.assert_allclose(result.body_linear_velocity(body)[-1, 0], 2.0, atol=1e-10)
+    np.testing.assert_allclose(result.linear_acceleration[:, 0, 0], 2.0, atol=1e-10)
+    np.testing.assert_allclose(result.reaction_force[:, 0, 0], 4.0, atol=1e-10)
+    assert diagnostics.max_acceleration_residual_m_per_s2 < 1e-12
+
+
+def test_fixed_orientation_dynamics_rejects_torque_like_force_contracts():
+    mechanism = Mechanism.spatial()
+    body = mechanism.body("body")
+
+    with pytest.raises(ValueError, match="world-frame"):
+        mechanism.force(body, (1.0, 0.0, 0.0), frame="body")
+    with pytest.raises(ValueError, match="center of mass"):
+        mechanism.force(
+            body, (1.0, 0.0, 0.0), application_point="offset"
+        )
+
+    offset = Mechanism.spatial()
+    offset.body("offset-com", center_of_mass=(0.1, 0.0, 0.0))
+    with pytest.raises(MechanismSolveError, match="coincide with its center of mass"):
+        offset.simulate_fixed_orientation(np.array([0.0, 0.1]))
 
 
 def test_spatial_model_and_excitation_identity_have_distinct_scopes():
