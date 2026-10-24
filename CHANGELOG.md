@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.9.2 - Free-Body Rotational Dynamics
+
+- Add an explicitly unconstrained one-body solver with body-to-world quaternion
+  integration and body-frame angular velocity.
+- Implement principal-axis Euler equations, gyroscopic terms, world/body load
+  frames, torques, force-at-point moments, and offset center-of-mass poses.
+- Add rotational diagnostics for quaternion norm, rotation orthogonality,
+  energy, linear momentum, and inertial angular momentum.
+- Add a versioned free-rigid-body result export with explicit conventions and
+  capability boundaries.
+- Upgrade fixed-orientation result exports to schema version 2 with constraint
+  row identities, masses, and a portable multiplier-to-reaction mapping.
+- Harden the fixed-orientation reader against changing rotations, fabricated
+  reactions, inconsistent diagnostics, missing conventions, and residuals
+  exceeding the recorded tolerance.
+- Preserve authored orientations while projecting initial translations in the
+  fixed-orientation solver.
+- Add free-particle, two-body reaction, constant-torque, force-at-point, and
+  asymmetric-top conservation tests.
+- Add stable named constraint rows, strict row/reference validation, and a
+  public helper grouping residual and multiplier histories by constraint.
+- Add an independent sine-force reference fixture, translational convergence
+  checks, adversarial initial-state/load/rank tests, and all three torque-free
+  principal-axis cases.
+- Keep multi-body coupling, joints, contacts, and constrained rotational
+  dynamics outside this release.
+
 ## v0.9.1 - Fixed-Orientation Spatial Translational Dynamics
 
 - Add an explicitly restricted fixed-orientation translational dynamics solver

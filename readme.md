@@ -23,7 +23,7 @@ neutral CAD handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.9.1
+git checkout v0.9.2
 uv sync --extra dev
 ```
 
@@ -93,6 +93,8 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
   result provenance, and versioned kinematic-result exports in `0.8.0`.
 - Experimental fixed-orientation spatial translational dynamics, force and
   reaction histories, three-level residuals, and versioned exports in `0.9.1`.
+- Experimental unconstrained free-body rotation with quaternion integration,
+  torque response, principal inertia, and conservation diagnostics in `0.9.2`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
@@ -167,6 +169,39 @@ derives it with the same adaptive multi-step policy used by the velocity guard.
 The dynamic result records the integration tolerances, sample projection,
 multiplier equation, physical reaction sign, solver kind, and unsupported
 rotational capabilities.
+
+Dynamic schema version 2 assigns every constraint row a stable kind, name,
+component, body reference, and unit pair. Use
+`mechanism.dynamics_constraint_groups(result)` to inspect residual and
+multiplier histories by joint or drive without depending on internal row order.
+The fixed-orientation constraints are affine in translation, so the solver
+records `none_affine_translation_constraints` instead of applying hidden
+stabilization; optional sample projection is recorded separately.
+
+## Free-Body Rotational Dynamics
+
+MBSD `0.9.2` adds an experimental one-body, unconstrained rotational solver.
+Orientations are active body-to-world quaternions in `[w, x, y, z]` order;
+angular velocity, principal inertia, and Euler's rotational equations use the
+body frame. Forces may use world or body coordinates, torques may use either
+frame, and a body-fixed application point contributes its moment about the
+center of mass.
+
+```python
+import numpy as np
+
+from mbsd import Mechanism
+
+m = Mechanism.spatial()
+rotor = m.body("rotor", inertia=(2.0, 3.0, 4.0))
+motor = m.rigid_body_load(rotor, torque=(2.0, 0.0, 0.0))
+result = m.simulate_free_body(np.linspace(0.0, 1.0, 101), loads=(motor,))
+print(m.rigid_body_diagnostics(result).as_dict())
+```
+
+This solver deliberately rejects ground bodies, joints, coordinate drives, and
+multiple bodies. Coupled six-DOF multi-body dynamics remains the `0.9.3`
+milestone; constrained rotational dynamics remains the `0.9.4` milestone.
 
 Planar dynamics uses the saddle-multiplier convention
 `M @ a + Cq.T @ lambda = Q`; exported generalized constraint reactions are the

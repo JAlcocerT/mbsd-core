@@ -1,0 +1,8 @@
+{
+  "description": "Analytic one-dimensional motion for mass 2 kg, force 2*sin(t) N, x(0)=v(0)=0",
+  "source": "Independent integration: a=sin(t), v=1-cos(t), x=t-sin(t)",
+  "time": [0.0, 0.5, 1.0],
+  "position_x": [0.0, 0.020574461395797, 0.1585290151921035],
+  "velocity_x": [0.0, 0.12241743810962724, 0.45969769413186023],
+  "absolute_tolerance": 1e-9
+}

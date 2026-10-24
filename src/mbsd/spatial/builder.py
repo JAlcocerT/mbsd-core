@@ -21,6 +21,14 @@ from .dynamics import (
     dynamics_diagnostics,
     simulate_fixed_orientation,
 )
+from .rotation import (
+    RigidBodyLoad,
+    SpatialRigidBodyDynamicsResult,
+    rigid_body_diagnostics,
+    rigid_body_result_to_dict,
+    rigid_body_result_to_json,
+    simulate_free_body,
+)
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
@@ -74,6 +82,11 @@ class SpatialCoordinateDrive:
     value: Callable[[float], float]
     velocity: Callable[[float], float]
     acceleration: Callable[[float], float] | None = None
+    name: str = "coordinate-drive"
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("coordinate drive name must be non-empty")
 
     def residual(self, poses: tuple[Pose3D, ...], t: float) -> float:
         axis = {"x": 0, "y": 1, "z": 2}[self.coordinate]
@@ -135,6 +148,7 @@ class SpatialCoordinateDrive:
                 if self.acceleration is None
                 else getattr(self.acceleration, "__name__", "callable")
             ),
+            "name": self.name,
         }
 
 
@@ -255,6 +269,7 @@ class SpatialMechanism:
                 "velocity_solve": True,
                 "spatial_dynamics": False,
                 "fixed_orientation_translational_dynamics": True,
+                "free_body_rotational_dynamics": True,
                 "joint_types": ("spherical", "fixed"),
                 "velocity_frame": "world",
             }
@@ -346,6 +361,7 @@ class SpatialMechanism:
         value: Callable[[float], float],
         velocity: Callable[[float], float],
         acceleration: Callable[[float], float] | None = None,
+        name: str | None = None,
     ) -> SpatialCoordinateDrive:
         if coordinate not in {"x", "y", "z"}:
             raise ValueError("coordinate must be one of: x, y, z")
@@ -353,8 +369,12 @@ class SpatialMechanism:
             raise TypeError("value and velocity must be callable")
         if acceleration is not None and not callable(acceleration):
             raise TypeError("acceleration must be callable when supplied")
+        drive_name = name or f"drive-{len(self._drives)}"
+        if any(existing.name == drive_name for existing in self._drives):
+            raise ValueError(f"coordinate drive name {drive_name!r} is already in use")
         drive = SpatialCoordinateDrive(
-            self._idx(body), coordinate, value, velocity, acceleration
+            self._idx(body), coordinate, value, velocity, acceleration,
+            drive_name,
         )
         self._drives.append(drive)
         return drive
@@ -531,6 +551,59 @@ class SpatialMechanism:
         self, result: SpatialDynamicsResult, path: str | Path, *, indent: int = 2
     ) -> Path:
         return dynamic_result_to_json(self, result, path, indent=indent)
+
+    def dynamics_constraint_groups(self, result: SpatialDynamicsResult):
+        """Group residual and multiplier histories by named constraint."""
+        from .dynamics import constraint_groups
+
+        return constraint_groups(self, result)
+
+    def rigid_body_load(
+        self,
+        body: int | SpatialBodyHandle,
+        *,
+        force=(0.0, 0.0, 0.0),
+        torque=(0.0, 0.0, 0.0),
+        application_point_from_com_body=(0.0, 0.0, 0.0),
+        force_frame: str = "world",
+        torque_frame: str = "body",
+        name: str = "load",
+    ) -> RigidBodyLoad:
+        """Create a force/torque descriptor for free rigid-body dynamics."""
+        return RigidBodyLoad(
+            body=self._idx(body), force=force, torque=torque,
+            application_point_from_com_body=application_point_from_com_body,
+            force_frame=force_frame, torque_frame=torque_frame, name=name,
+        )
+
+    def simulate_free_body(
+        self,
+        t: np.ndarray,
+        *,
+        linear_velocity0=(0.0, 0.0, 0.0),
+        angular_velocity0_body=(0.0, 0.0, 0.0),
+        loads=(),
+        inertia_tensor_body: np.ndarray | None = None,
+        method: str = "DOP853",
+        rtol: float = 1e-10,
+        atol: float = 1e-12,
+    ) -> SpatialRigidBodyDynamicsResult:
+        """Integrate one unconstrained body with translation and rotation."""
+        return simulate_free_body(
+            self, t, linear_velocity0=linear_velocity0,
+            angular_velocity0_body=angular_velocity0_body, loads=loads,
+            inertia_tensor_body=inertia_tensor_body,
+            method=method, rtol=rtol, atol=atol,
+        )
+
+    def rigid_body_diagnostics(self, result: SpatialRigidBodyDynamicsResult):
+        return rigid_body_diagnostics(self, result)
+
+    def rigid_body_result_to_dict(self, result: SpatialRigidBodyDynamicsResult):
+        return rigid_body_result_to_dict(self, result)
+
+    def rigid_body_result_to_json(self, result, path: str | Path, *, indent: int = 2):
+        return rigid_body_result_to_json(self, result, path, indent=indent)
 
     def constraint_residual(
         self, poses: Iterable[Pose3D], t: float = 0.0

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 DYNAMIC_RESULT_SCHEMA = "mbsd.spatial.fixed_orientation_dynamic_result"
-DYNAMIC_RESULT_SCHEMA_VERSION = 1
+DYNAMIC_RESULT_SCHEMA_VERSION = 2
 ForceLaw = Callable[[float, tuple[Pose3D, ...], np.ndarray], Iterable[float]]
 
 
@@ -193,7 +193,9 @@ def simulate_fixed_orientation(
     if poses0 is None:
         template = mechanism._initial_poses()
         if mechanism._ground is not None or mechanism._joints or mechanism._drives:
-            template = mechanism.solve_position(template, float(times[0]), tol=constraint_tol)
+            template = _project_initial_translations(
+                mechanism, template, float(times[0]), constraint_tol
+            )
     else:
         template = mechanism._validate_poses(poses0)
     _validate_fixed_orientation_configuration(mechanism, template, constraint_tol)
@@ -322,6 +324,7 @@ def simulate_fixed_orientation(
             "multiplier_equation": "M*a + J.T*lambda = applied_force",
             "physical_reaction": "-J.T*lambda",
             "drive_acceleration": "supplied_or_adaptive_velocity_derivative",
+            "stabilization": "none_affine_translation_constraints",
             "force_descriptors": tuple(
                 MappingProxyType(force.as_dict()) for force in force_values
             ),
@@ -382,6 +385,7 @@ def dynamic_result_to_dict(
     mechanism: SpatialMechanism, result: SpatialDynamicsResult
 ) -> dict[str, Any]:
     diagnostics = dynamics_diagnostics(mechanism, result)
+    jacobian = _constraint_jacobian(mechanism)
     return {
         "schema": DYNAMIC_RESULT_SCHEMA,
         "schema_version": DYNAMIC_RESULT_SCHEMA_VERSION,
@@ -412,6 +416,8 @@ def dynamic_result_to_dict(
         "diagnostics": diagnostics.as_dict(),
         "time": result.t.tolist(),
         "constraint_count": result.position_residuals.shape[0],
+        "constraint_layout": _constraint_layout(mechanism),
+        "reaction_mapping": (-jacobian.T).tolist(),
         "position_residuals": result.position_residuals.tolist(),
         "velocity_residuals": result.velocity_residuals.tolist(),
         "acceleration_residuals": result.acceleration_residuals.tolist(),
@@ -420,6 +426,7 @@ def dynamic_result_to_dict(
             {
                 "index": body_index,
                 "name": body.name,
+                "mass": body.mass,
                 "poses": [step[body_index].as_dict() for step in result.poses],
                 "linear_velocity": result.linear_velocity[:, body_index].tolist(),
                 "linear_acceleration": result.linear_acceleration[:, body_index].tolist(),
@@ -443,6 +450,26 @@ def dynamic_result_to_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=indent, allow_nan=False) + "\n", encoding="utf-8")
     return path
+
+
+def constraint_groups(mechanism: SpatialMechanism, result: SpatialDynamicsResult) -> dict[str, dict[str, Any]]:
+    """Return named constraint histories without exposing assembly ordering."""
+    _validate_result(mechanism, result)
+    groups: dict[str, dict[str, Any]] = {}
+    for descriptor in _constraint_layout(mechanism):
+        key = f"{descriptor['kind']}:{descriptor['name']}"
+        group = groups.setdefault(key, {"kind": descriptor["kind"], "name": descriptor["name"], "rows": [], "components": [], "position_residuals": [], "velocity_residuals": [], "acceleration_residuals": [], "multipliers": []})
+        row = descriptor["row"]
+        group["rows"].append(row)
+        group["components"].append(descriptor["component"])
+        group["position_residuals"].append(result.position_residuals[row])
+        group["velocity_residuals"].append(result.velocity_residuals[row])
+        group["acceleration_residuals"].append(result.acceleration_residuals[row])
+        group["multipliers"].append(result.multipliers[:, row])
+    for group in groups.values():
+        for history_name in ("position_residuals", "velocity_residuals", "acceleration_residuals", "multipliers"):
+            group[history_name] = np.asarray(group[history_name])
+    return groups
 
 
 def validate_spatial_dynamic_result_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -470,11 +497,20 @@ def validate_spatial_dynamic_result_payload(payload: Mapping[str, Any]) -> dict[
     }
     if payload.get("units") != expected_units:
         raise ValueError("units must match the fixed-orientation dynamics contract")
+    expected_conventions = {
+        "world_frame": "right_handed_xyz",
+        "rotation": "active_body_to_world_constant",
+        "array_layout": "time_body_component",
+        "force_frame": "world",
+        "reaction_force": "physical_-J.T_lambda",
+    }
+    if payload.get("conventions") != expected_conventions:
+        raise ValueError("conventions must match the fixed-orientation dynamics contract")
     capabilities = payload.get("capabilities")
-    if not isinstance(capabilities, Mapping):
-        raise ValueError("capabilities must be a mapping")
-    if capabilities.get("orientation_dynamics") is not False or capabilities.get("torque_inputs") is not False:
-        raise ValueError("capabilities must reject orientation dynamics and torque inputs")
+    expected_capabilities = dict(fixed_orientation_capabilities())
+    expected_capabilities["joint_types"] = list(expected_capabilities["joint_types"])
+    if capabilities != expected_capabilities:
+        raise ValueError("capabilities must match the fixed-orientation dynamics contract")
     solver_status = payload.get("solver_status")
     if (
         not isinstance(solver_status, Mapping)
@@ -482,8 +518,42 @@ def validate_spatial_dynamic_result_payload(payload: Mapping[str, Any]) -> dict[
         or not isinstance(solver_status.get("message"), str)
     ):
         raise ValueError("solver_status must contain boolean success and string message")
-    if not isinstance(payload.get("provenance"), Mapping):
-        raise ValueError("provenance must be a mapping")
+    provenance = payload.get("provenance")
+    required_provenance = {
+        "mbsd_version", "solver", "method", "rtol", "atol",
+        "constraint_tolerance", "sample_projection", "multiplier_equation",
+        "physical_reaction", "drive_acceleration", "stabilization",
+        "force_descriptors",
+    }
+    if not isinstance(provenance, Mapping) or not required_provenance <= provenance.keys():
+        raise ValueError("provenance is missing required solver fields")
+    if provenance.get("multiplier_equation") != "M*a + J.T*lambda = applied_force":
+        raise ValueError("provenance multiplier convention is invalid")
+    if provenance.get("physical_reaction") != "-J.T*lambda":
+        raise ValueError("provenance reaction convention is invalid")
+    if provenance.get("solver") != "scipy.solve_ivp":
+        raise ValueError("provenance solver is invalid")
+    if provenance.get("method") not in {"RK45", "DOP853", "Radau"}:
+        raise ValueError("provenance method is invalid")
+    for name in ("rtol", "atol"):
+        value = provenance.get(name)
+        if not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
+            raise ValueError(f"provenance.{name} must be positive and finite")
+    if not isinstance(provenance.get("sample_projection"), bool):
+        raise ValueError("provenance.sample_projection must be boolean")
+    if provenance.get("drive_acceleration") != "supplied_or_adaptive_velocity_derivative":
+        raise ValueError("provenance drive acceleration policy is invalid")
+    if provenance.get("stabilization") != "none_affine_translation_constraints":
+        raise ValueError("provenance stabilization policy is invalid")
+    force_descriptors = provenance.get("force_descriptors")
+    if not isinstance(force_descriptors, list):
+        raise ValueError("provenance.force_descriptors must be a list")
+    for descriptor in force_descriptors:
+        if not isinstance(descriptor, Mapping) or descriptor.get("frame") != "world" or descriptor.get("application_point") != "center_of_mass" or descriptor.get("units") != "N":
+            raise ValueError("provenance contains an invalid force descriptor")
+    constraint_tolerance = provenance.get("constraint_tolerance")
+    if not isinstance(constraint_tolerance, (int, float)) or not np.isfinite(constraint_tolerance) or constraint_tolerance <= 0:
+        raise ValueError("provenance.constraint_tolerance must be positive and finite")
     times = np.asarray(payload.get("time"), dtype=float)
     if times.ndim != 1 or len(times) < 2 or not np.all(np.isfinite(times)):
         raise ValueError("time must be a finite one-dimensional array with at least two values")
@@ -495,11 +565,23 @@ def validate_spatial_dynamic_result_payload(payload: Mapping[str, Any]) -> dict[
     bodies = payload.get("bodies")
     if not isinstance(bodies, list) or not bodies:
         raise ValueError("bodies must be a non-empty list")
+    names: set[str] = set()
+    masses: list[float] = []
+    body_arrays: list[dict[str, np.ndarray]] = []
     for index, body in enumerate(bodies):
         if not isinstance(body, Mapping) or body.get("index") != index:
             raise ValueError(f"bodies[{index}] has invalid identity fields")
+        name = body.get("name")
+        if not isinstance(name, str) or not name or name in names:
+            raise ValueError("body names must be non-empty and unique")
+        names.add(name)
+        mass = body.get("mass")
+        if not isinstance(mass, (int, float)) or not np.isfinite(mass) or mass <= 0:
+            raise ValueError(f"bodies[{index}].mass must be positive and finite")
+        masses.append(float(mass))
         if len(body.get("poses", ())) != len(times):
             raise ValueError(f"bodies[{index}].poses must match time length")
+        initial_quaternion = None
         for pose_index, pose in enumerate(body["poses"]):
             if not isinstance(pose, Mapping):
                 raise ValueError(f"bodies[{index}].poses[{pose_index}] must be a mapping")
@@ -521,10 +603,17 @@ def validate_spatial_dynamic_result_payload(payload: Mapping[str, Any]) -> dict[
                 np.linalg.norm(quaternion), 1.0, atol=1e-10, rtol=1e-10
             ):
                 raise ValueError(f"bodies[{index}].poses[{pose_index}] has invalid quaternion")
+            if initial_quaternion is None:
+                initial_quaternion = quaternion
+            elif not np.isclose(abs(float(np.dot(initial_quaternion, quaternion))), 1.0, atol=1e-10, rtol=1e-10):
+                raise ValueError(f"bodies[{index}] orientation must remain constant")
+        arrays_for_body: dict[str, np.ndarray] = {}
         for name in ("linear_velocity", "linear_acceleration", "applied_force", "reaction_force"):
             values = np.asarray(body.get(name), dtype=float)
             if values.shape != (len(times), 3) or not np.all(np.isfinite(values)):
                 raise ValueError(f"bodies[{index}].{name} must be finite with time_by_3 shape")
+            arrays_for_body[name] = values
+        body_arrays.append(arrays_for_body)
     for name in ("position_residuals", "velocity_residuals", "acceleration_residuals"):
         raw_values = payload.get(name)
         if constraint_count == 0 and raw_values == []:
@@ -550,6 +639,8 @@ def validate_spatial_dynamic_result_payload(payload: Mapping[str, Any]) -> dict[
     for name, expected in expected_maxima.items():
         if not np.isclose(diagnostics.get(name, np.nan), expected, atol=1e-15, rtol=1e-12):
             raise ValueError(f"diagnostics.{name} does not match residual arrays")
+    if diagnostics.get("steps") != len(times):
+        raise ValueError("diagnostics.steps must match time length")
     if diagnostics.get("finite") is not True or not isinstance(diagnostics.get("success"), bool):
         raise ValueError("diagnostics finite/success fields are invalid")
     if diagnostics["success"] is not solver_status["success"]:
@@ -560,6 +651,65 @@ def validate_spatial_dynamic_result_payload(payload: Mapping[str, Any]) -> dict[
         multipliers = np.empty(expected_multiplier_shape)
     if multipliers.shape != expected_multiplier_shape or not np.all(np.isfinite(multipliers)):
         raise ValueError("multipliers must be finite with time_by_constraint shape")
+    layout = payload.get("constraint_layout")
+    if not isinstance(layout, list) or len(layout) != constraint_count:
+        raise ValueError("constraint_layout must identify every constraint row")
+    required_layout = {"row", "kind", "name", "component", "body_i", "body_j", "residual_units", "multiplier_units"}
+    row_groups: dict[tuple[str, str], tuple[int | None, int | None, set[str]]] = {}
+    for row, descriptor in enumerate(layout):
+        if not isinstance(descriptor, Mapping) or not required_layout <= descriptor.keys() or descriptor.get("row") != row:
+            raise ValueError("constraint_layout rows must be ordered and complete")
+        if descriptor.get("residual_units") != "m" or descriptor.get("multiplier_units") != "N":
+            raise ValueError("constraint_layout units are invalid")
+        kind = descriptor.get("kind")
+        component = descriptor.get("component")
+        body_i = descriptor.get("body_i")
+        body_j = descriptor.get("body_j")
+        if kind not in {"ground", "joint", "drive"} or component not in {"x", "y", "z"}:
+            raise ValueError("constraint_layout kind or component is invalid")
+        if not isinstance(descriptor.get("name"), str) or not descriptor["name"]:
+            raise ValueError("constraint_layout names must be non-empty")
+        for reference_name, reference in (("body_i", body_i), ("body_j", body_j)):
+            if reference is not None and (isinstance(reference, bool) or not isinstance(reference, int) or reference < 0 or reference >= len(bodies)):
+                raise ValueError(f"constraint_layout {reference_name} is out of range")
+        if kind in {"ground", "drive"} and (body_i is None or body_j is not None):
+            raise ValueError("ground and drive rows require body_i only")
+        if kind == "joint" and body_i is None and body_j is None:
+            raise ValueError("joint rows must reference at least one body")
+        if kind == "ground" and descriptor["name"] != bodies[body_i]["name"]:
+            raise ValueError("ground row name must match its body name")
+        key = (kind, descriptor["name"])
+        if key not in row_groups:
+            row_groups[key] = (body_i, body_j, set())
+        expected_i, expected_j, components = row_groups[key]
+        if (body_i, body_j) != (expected_i, expected_j) or component in components:
+            raise ValueError("constraint_layout grouped row identity is inconsistent")
+        components.add(component)
+    reaction_mapping = np.asarray(payload.get("reaction_mapping"), dtype=float)
+    if reaction_mapping.shape != (3 * len(bodies), constraint_count) or not np.all(np.isfinite(reaction_mapping)):
+        raise ValueError("reaction_mapping must have body_component_by_constraint shape")
+    reaction = np.stack([values["reaction_force"] for values in body_arrays], axis=1)
+    expected_reaction = (reaction_mapping @ multipliers.T).T.reshape(len(times), len(bodies), 3)
+    if not np.allclose(reaction, expected_reaction, atol=1e-10, rtol=1e-10):
+        raise ValueError("reaction_force does not match reaction_mapping and multipliers")
+    mass_array = np.asarray(masses)[None, :, None]
+    acceleration = np.stack([values["linear_acceleration"] for values in body_arrays], axis=1)
+    applied = np.stack([values["applied_force"] for values in body_arrays], axis=1)
+    force_balance = mass_array * acceleration - applied - reaction
+    expected_force_balance = _norm(force_balance)
+    if not np.isclose(diagnostics.get("max_force_balance_residual_n", np.nan), expected_force_balance, atol=1e-12, rtol=1e-10):
+        raise ValueError("diagnostics.max_force_balance_residual_n does not match body arrays")
+    velocity = np.stack([values["linear_velocity"] for values in body_arrays], axis=1)
+    kinetic = 0.5 * np.sum(mass_array * velocity**2, axis=(1, 2))
+    momentum = np.sum(mass_array * velocity, axis=1)
+    expected_energy = float(np.max(np.abs(kinetic - kinetic[0])) / max(1.0, abs(float(kinetic[0]))))
+    expected_momentum = float(np.max(np.linalg.norm(momentum - momentum[0], axis=1)) / max(1.0, float(np.linalg.norm(momentum[0]))))
+    if not np.isclose(diagnostics.get("relative_energy_change", np.nan), expected_energy, atol=1e-12, rtol=1e-10):
+        raise ValueError("diagnostics.relative_energy_change does not match body arrays")
+    if not np.isclose(diagnostics.get("relative_momentum_change", np.nan), expected_momentum, atol=1e-12, rtol=1e-10):
+        raise ValueError("diagnostics.relative_momentum_change does not match body arrays")
+    if solver_status["success"] and any(expected > constraint_tolerance for expected in expected_maxima.values()):
+        raise ValueError("successful result residuals exceed constraint tolerance")
     try:
         return json.loads(json.dumps(payload, allow_nan=False))
     except (TypeError, ValueError) as error:
@@ -611,6 +761,37 @@ def _constraint_residual(mechanism, q, template, t):
     for drive in mechanism._drives:
         values.append(drive.residual(poses, t))
     return np.asarray(values, dtype=float)
+
+
+def _project_initial_translations(mechanism, poses, t, tolerance):
+    """Project translations while preserving every authored orientation."""
+    jacobian = _constraint_jacobian(mechanism)
+    q = _translations(poses)
+    if jacobian.size:
+        q -= np.linalg.pinv(jacobian) @ _constraint_residual(mechanism, q, poses, t)
+    projected = _poses(q, poses)
+    residual = _constraint_residual(mechanism, q, poses, t)
+    if _norm(residual) > tolerance:
+        raise MechanismSolveError(
+            "Initial translations cannot satisfy fixed-orientation constraints "
+            f"without changing authored orientations: {_norm(residual):.3e} > {tolerance:.3e}."
+        )
+    return projected
+
+
+def _constraint_layout(mechanism):
+    layout: list[dict[str, Any]] = []
+    components = ("x", "y", "z")
+    if mechanism._ground is not None:
+        body = mechanism._ground
+        for component in components:
+            layout.append({"row": len(layout), "kind": "ground", "name": mechanism._bodies[body].name, "component": component, "body_i": body, "body_j": None, "residual_units": "m", "multiplier_units": "N"})
+    for joint in mechanism._joints:
+        for component in components:
+            layout.append({"row": len(layout), "kind": "joint", "name": joint.name, "component": component, "body_i": joint.body_i, "body_j": joint.body_j, "residual_units": "m", "multiplier_units": "N"})
+    for drive in mechanism._drives:
+            layout.append({"row": len(layout), "kind": "drive", "name": drive.name, "component": drive.coordinate, "body_i": drive.body, "body_j": None, "residual_units": "m", "multiplier_units": "N"})
+    return layout
 
 
 def _constraint_jacobian(mechanism):

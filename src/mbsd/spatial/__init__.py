@@ -33,6 +33,7 @@ from .kinematics import (
     SpatialResidualSummary,
 )
 from .dynamics import (
+    constraint_groups,
     DYNAMIC_RESULT_SCHEMA,
     DYNAMIC_RESULT_SCHEMA_VERSION,
     SpatialDynamicsDiagnostics,
@@ -40,6 +41,16 @@ from .dynamics import (
     SpatialForce,
     load_spatial_dynamic_result_payload,
     validate_spatial_dynamic_result_payload,
+)
+from .rotation import (
+    free_body_capabilities,
+    load_rigid_body_result_payload,
+    RIGID_BODY_RESULT_SCHEMA,
+    RIGID_BODY_RESULT_SCHEMA_VERSION,
+    RigidBodyDynamicsDiagnostics,
+    RigidBodyLoad,
+    SpatialRigidBodyDynamicsResult,
+    validate_rigid_body_result_payload,
 )
 from .vocabulary import (
     FixedJoint3D,
@@ -58,9 +69,16 @@ from .vocabulary import (
 
 __all__ = [
     "FixedJoint3D",
+    "constraint_groups",
+    "free_body_capabilities",
+    "load_rigid_body_result_payload",
     "DYNAMIC_RESULT_SCHEMA",
     "DYNAMIC_RESULT_SCHEMA_VERSION",
     "Frame3D",
+    "RIGID_BODY_RESULT_SCHEMA",
+    "RIGID_BODY_RESULT_SCHEMA_VERSION",
+    "RigidBodyDynamicsDiagnostics",
+    "RigidBodyLoad",
     "Pose3D",
     "Quaternion",
     "SphericalJoint3D",
@@ -75,6 +93,8 @@ __all__ = [
     "SpatialBody",
     "SpatialDynamicsDiagnostics",
     "SpatialDynamicsResult",
+    "SpatialRigidBodyDynamicsResult",
+    "validate_rigid_body_result_payload",
     "SpatialForce",
     "SpatialModel",
     "SPATIAL_MODEL_SCHEMA",
