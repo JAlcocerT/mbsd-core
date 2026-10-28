@@ -12,6 +12,8 @@ from mbsd.spatial import (
     SpatialMechanism,
     load_spatial_dynamic_result_payload,
     load_rigid_body_result_payload,
+    load_coupled_result_payload,
+    validate_coupled_result_payload,
     load_spatial_kinematic_result_payload,
     validate_spatial_kinematic_result_payload,
     validate_spatial_dynamic_result_payload,
@@ -536,6 +538,179 @@ def test_free_body_rejects_invalid_inertia_and_nonfinite_runtime_load():
     )
     with pytest.raises(ValueError, match="finite vector"):
         mechanism.simulate_free_body(np.array([0.0, 0.1]), loads=(load,))
+
+
+def test_coupled_gravity_free_fall_preserves_arbitrary_orientations():
+    mechanism = Mechanism.spatial()
+    rotations = (
+        Quaternion.from_axis_angle((1.0, 0.0, 0.0), 0.3),
+        Quaternion.from_axis_angle((0.0, 1.0, 1.0), -0.5),
+    )
+    mechanism.body("a", mass=2.0, pose=Pose3D((1.0, 2.0, 3.0), rotations[0]))
+    mechanism.body("b", mass=5.0, pose=Pose3D((-2.0, 0.5, 1.0), rotations[1]))
+    times = np.linspace(0.0, 1.0, 21)
+    result = mechanism.simulate_coupled_rigid_bodies(
+        times, gravity_world=(0.0, 0.0, -9.81)
+    )
+
+    np.testing.assert_allclose(
+        result.center_of_mass_position[:, :, 2],
+        np.asarray([[3.0, 1.0]]) - 4.905 * times[:, None] ** 2,
+        atol=2e-9,
+    )
+    for body_index, rotation in enumerate(rotations):
+        for pose in result.body_poses(body_index):
+            np.testing.assert_allclose(
+                pose.rotation.to_rotation_matrix(), rotation.to_rotation_matrix(), atol=2e-10
+            )
+
+
+def test_coupled_off_center_force_and_pure_couple_have_expected_effects():
+    mechanism = Mechanism.spatial()
+    first = mechanism.body("forced", mass=2.0, inertia=(1.0, 2.0, 3.0))
+    second = mechanism.body("couple", mass=4.0, inertia=(2.0, 3.0, 4.0))
+    off_center = mechanism.rigid_body_load(
+        first, force=(0.0, 2.0, 0.0),
+        application_point_from_com_body=(1.0, 0.0, 0.0), force_frame="body",
+    )
+    couple = mechanism.rigid_body_load(second, torque=(0.0, 0.0, 4.0))
+    result = mechanism.simulate_coupled_rigid_bodies(
+        np.array([0.0, 0.01]), loads=(off_center, couple)
+    )
+
+    np.testing.assert_allclose(result.linear_acceleration[0, 0], [0.0, 1.0, 0.0])
+    np.testing.assert_allclose(result.angular_acceleration_body[0, 0], [0.0, 0.0, 2.0 / 3.0])
+    np.testing.assert_allclose(result.linear_acceleration[:, 1], 0.0, atol=1e-14)
+    np.testing.assert_allclose(result.angular_acceleration_body[0, 1], [0.0, 0.0, 1.0])
+
+
+def test_coupled_offset_com_pose_tracks_rotating_reference_origin():
+    mechanism = Mechanism.spatial()
+    body = mechanism.body(
+        "offset", inertia=(2.0, 3.0, 4.0), center_of_mass=(0.5, 0.0, 0.0),
+        pose=Pose3D(translation=(1.0, 2.0, 3.0)),
+    )
+    load = mechanism.rigid_body_load(body, torque=(0.0, 0.0, 4.0))
+    result = mechanism.simulate_coupled_rigid_bodies(
+        np.linspace(0.0, 1.0, 21), loads=(load,)
+    )
+
+    np.testing.assert_allclose(
+        result.center_of_mass_position,
+        np.tile([1.5, 2.0, 3.0], (len(result.t), 1, 1)), atol=2e-10,
+    )
+    for index, pose in enumerate(result.body_poses(0)):
+        reconstructed = pose.translation + pose.rotation.rotate((0.5, 0.0, 0.0))
+        np.testing.assert_allclose(reconstructed, result.center_of_mass_position[index, 0], atol=2e-10)
+
+
+def test_coupled_isolated_system_conserves_total_momenta_and_energy():
+    mechanism = Mechanism.spatial()
+    mechanism.body("a", mass=2.0, inertia=(2.0, 3.0, 4.0), pose=Pose3D((-1.0, 0.0, 0.0)))
+    mechanism.body("b", mass=3.0, inertia=(1.5, 2.0, 2.5), pose=Pose3D((2.0, 1.0, 0.0)))
+    result = mechanism.simulate_coupled_rigid_bodies(
+        np.linspace(0.0, 3.0, 101),
+        linear_velocity0=np.array([[0.4, -0.2, 0.1], [-0.3, 0.5, -0.2]]),
+        angular_velocity0_body=np.array([[0.7, 1.1, -0.4], [0.2, -0.3, 0.5]]),
+        rtol=1e-11, atol=1e-13,
+    )
+    diagnostics = mechanism.coupled_diagnostics(result)
+
+    assert diagnostics.relative_kinetic_energy_change < 3e-10
+    assert diagnostics.relative_linear_momentum_change < 1e-12
+    assert diagnostics.relative_angular_momentum_change < 3e-10
+
+
+def test_coupled_pair_interaction_is_equal_opposite_and_exports_complete_state(tmp_path):
+    mechanism = Mechanism.spatial()
+    first = mechanism.body("first", mass=2.0, pose=Pose3D((-1.0, 0.0, 0.0)))
+    second = mechanism.body("second", mass=3.0, pose=Pose3D((1.0, 0.0, 0.0)))
+    interaction = mechanism.pair_interaction(
+        first, second, (6.0, 0.0, 0.0), name="internal-pair"
+    )
+    result = mechanism.simulate_coupled_rigid_bodies(
+        np.linspace(0.0, 1.0, 11), interactions=(interaction,)
+    )
+    path = mechanism.coupled_result_to_json(result, tmp_path / "coupled.json")
+    payload = load_coupled_result_payload(path)
+
+    np.testing.assert_allclose(result.linear_acceleration[:, 0, 0], 3.0, atol=1e-12)
+    np.testing.assert_allclose(result.linear_acceleration[:, 1, 0], -2.0, atol=1e-12)
+    total_momentum = np.sum(
+        np.array([2.0, 3.0])[None, :, None] * result.linear_velocity, axis=1
+    )
+    np.testing.assert_allclose(total_momentum, 0.0, atol=2e-10)
+    assert payload["bodies"][0]["center_of_mass_position"]
+    assert payload["model_id"] == mechanism.model_id()
+    assert len(payload["excitation_id"]) == 16
+    assert payload["provenance"]["interaction_descriptors"][0]["name"] == "internal-pair"
+
+    corrupt_force = copy.deepcopy(payload)
+    corrupt_force["bodies"][0]["applied_force_world"][0][0] += 1.0
+    with pytest.raises(ValueError, match="force balance"):
+        validate_coupled_result_payload(corrupt_force)
+    corrupt_torque = copy.deepcopy(payload)
+    corrupt_torque["bodies"][0]["applied_torque_body"][0][2] += 1.0
+    with pytest.raises(ValueError, match="torque balance"):
+        validate_coupled_result_payload(corrupt_torque)
+    corrupt_pose = copy.deepcopy(payload)
+    corrupt_pose["bodies"][0]["poses"][0]["translation"][0] += 1.0
+    with pytest.raises(ValueError, match="center-of-mass"):
+        validate_coupled_result_payload(corrupt_pose)
+    corrupt_provenance = copy.deepcopy(payload)
+    corrupt_provenance["provenance"]["interaction_descriptors"][0]["body_j"] = 99
+    with pytest.raises(ValueError, match="interaction descriptor"):
+        validate_coupled_result_payload(corrupt_provenance)
+
+
+def test_coupled_dynamics_is_invariant_under_world_frame_transform():
+    base = Mechanism.spatial()
+    base_body = base.body("body", mass=2.0, inertia=(2.0, 3.0, 4.0), pose=Pose3D((1.0, -2.0, 0.5)))
+    base_load = base.rigid_body_load(
+        base_body, force=(1.0, 2.0, -0.5), torque=(0.3, -0.2, 0.4), torque_frame="world"
+    )
+    times = np.linspace(0.0, 0.5, 31)
+    velocity = np.array([[0.4, -0.1, 0.2]])
+    base_result = base.simulate_coupled_rigid_bodies(
+        times, linear_velocity0=velocity, loads=(base_load,), gravity_world=(0.0, 0.0, -9.81)
+    )
+
+    frame_rotation = Quaternion.from_axis_angle((1.0, 1.0, -0.5), 0.7)
+    matrix = frame_rotation.to_rotation_matrix()
+    shift = np.array([3.0, -1.0, 2.0])
+    transformed = Mechanism.spatial()
+    transformed_body = transformed.body(
+        "body", mass=2.0, inertia=(2.0, 3.0, 4.0),
+        pose=Pose3D(matrix @ np.array([1.0, -2.0, 0.5]) + shift, frame_rotation),
+    )
+    transformed_load = transformed.rigid_body_load(
+        transformed_body, force=matrix @ np.array([1.0, 2.0, -0.5]),
+        torque=matrix @ np.array([0.3, -0.2, 0.4]), torque_frame="world",
+    )
+    transformed_result = transformed.simulate_coupled_rigid_bodies(
+        times, linear_velocity0=np.array([matrix @ velocity[0]]), loads=(transformed_load,),
+        gravity_world=matrix @ np.array([0.0, 0.0, -9.81]),
+    )
+
+    expected_position = np.einsum("ij,tbj->tbi", matrix, base_result.center_of_mass_position) + shift
+    expected_velocity = np.einsum("ij,tbj->tbi", matrix, base_result.linear_velocity)
+    np.testing.assert_allclose(transformed_result.center_of_mass_position, expected_position, atol=2e-9)
+    np.testing.assert_allclose(transformed_result.linear_velocity, expected_velocity, atol=2e-9)
+    np.testing.assert_allclose(
+        transformed_result.angular_velocity_body,
+        base_result.angular_velocity_body, atol=2e-9,
+    )
+    expected_force = np.einsum("ij,tbj->tbi", matrix, base_result.applied_force_world)
+    np.testing.assert_allclose(
+        transformed_result.applied_force_world, expected_force, atol=2e-9
+    )
+    for base_pose, transformed_pose in zip(
+        base_result.body_poses(0), transformed_result.body_poses(0)
+    ):
+        np.testing.assert_allclose(
+            transformed_pose.rotation.to_rotation_matrix(),
+            matrix @ base_pose.rotation.to_rotation_matrix(), atol=2e-9,
+        )
 
 
 def test_fixed_orientation_dynamics_rejects_torque_like_force_contracts():

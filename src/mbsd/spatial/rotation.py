@@ -63,6 +63,17 @@ class RigidBodyLoad:
         torque_body = torque_body + np.cross(self.application_point_from_com_body, force_body)
         return force_world, torque_body
 
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name, "body": self.body,
+            "force_frame": self.force_frame, "torque_frame": self.torque_frame,
+            "application_point_from_com_body": self.application_point_from_com_body.tolist(),
+            "force_kind": "runtime_law" if callable(self.force) else "constant",
+            "torque_kind": "runtime_law" if callable(self.torque) else "constant",
+            "force": None if callable(self.force) else self.force.tolist(),
+            "torque": None if callable(self.torque) else self.torque.tolist(),
+        }
+
 
 @dataclass(frozen=True)
 class SpatialRigidBodyDynamicsResult:

@@ -29,6 +29,14 @@ from .rotation import (
     rigid_body_result_to_json,
     simulate_free_body,
 )
+from .coupled import (
+    CoupledRigidBodyDynamicsResult,
+    RigidBodyPairInteraction,
+    coupled_diagnostics,
+    coupled_result_to_dict,
+    coupled_result_to_json,
+    simulate_coupled_rigid_bodies,
+)
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
@@ -270,6 +278,7 @@ class SpatialMechanism:
                 "spatial_dynamics": False,
                 "fixed_orientation_translational_dynamics": True,
                 "free_body_rotational_dynamics": True,
+                "coupled_six_dof_rigid_body_dynamics": True,
                 "joint_types": ("spherical", "fixed"),
                 "velocity_frame": "world",
             }
@@ -604,6 +613,40 @@ class SpatialMechanism:
 
     def rigid_body_result_to_json(self, result, path: str | Path, *, indent: int = 2):
         return rigid_body_result_to_json(self, result, path, indent=indent)
+
+    def pair_interaction(
+        self, body_i, body_j, force_on_i_world, *,
+        point_i_from_com_body=(0.0, 0.0, 0.0),
+        point_j_from_com_body=(0.0, 0.0, 0.0), name: str = "interaction",
+    ) -> RigidBodyPairInteraction:
+        """Create an equal-and-opposite internal force pair."""
+        return RigidBodyPairInteraction(
+            self._idx(body_i), self._idx(body_j), force_on_i_world,
+            point_i_from_com_body, point_j_from_com_body, name,
+        )
+
+    def simulate_coupled_rigid_bodies(
+        self, t: np.ndarray, *, linear_velocity0=None,
+        angular_velocity0_body=None, loads=(), interactions=(),
+        gravity_world=(0.0, 0.0, 0.0), inertia_tensors_body=None,
+        method: str = "DOP853", rtol: float = 1e-10, atol: float = 1e-12,
+    ) -> CoupledRigidBodyDynamicsResult:
+        return simulate_coupled_rigid_bodies(
+            self, t, linear_velocity0=linear_velocity0,
+            angular_velocity0_body=angular_velocity0_body, loads=loads,
+            interactions=interactions, gravity_world=gravity_world,
+            inertia_tensors_body=inertia_tensors_body, method=method,
+            rtol=rtol, atol=atol,
+        )
+
+    def coupled_diagnostics(self, result: CoupledRigidBodyDynamicsResult):
+        return coupled_diagnostics(self, result)
+
+    def coupled_result_to_dict(self, result: CoupledRigidBodyDynamicsResult):
+        return coupled_result_to_dict(self, result)
+
+    def coupled_result_to_json(self, result, path: str | Path, *, indent: int = 2):
+        return coupled_result_to_json(self, result, path, indent=indent)
 
     def constraint_residual(
         self, poses: Iterable[Pose3D], t: float = 0.0

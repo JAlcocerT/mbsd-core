@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.9.3 - Coupled Six-DOF Rigid-Body Dynamics
+
+- Add an unconstrained multi-body solver coupling center-of-mass translation,
+  quaternion orientation, linear velocity, and body-frame angular velocity.
+- Support per-body symmetric inertia tensors, offset centers of mass, gravity,
+  world/body-frame loads, torques, and force-at-point moments.
+- Add equal-and-opposite pair interactions with body-fixed application points
+  for explicit multi-body force coupling.
+- Export complete body state, accelerations, forces, torques, inertia, gravity,
+  load descriptors, interaction descriptors, and solver provenance.
+- Add coupled diagnostics for quaternion validity, rotation orthogonality,
+  kinetic energy, total linear momentum, total inertial angular momentum, and
+  internal-force balance.
+- Validate arbitrary-orientation free fall, off-center force, pure couple,
+  rotating offset-COM reference motion, isolated multi-body conservation,
+  pair-force momentum balance, and world-frame invariance.
+- Keep joints, constraints, reaction loads, contact, and collision outside this
+  release; constrained rotational dynamics remains the `0.9.4` milestone.
+
 ## v0.9.2 - Free-Body Rotational Dynamics
 
 - Add an explicitly unconstrained one-body solver with body-to-world quaternion

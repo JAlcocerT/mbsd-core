@@ -52,6 +52,16 @@ from .rotation import (
     SpatialRigidBodyDynamicsResult,
     validate_rigid_body_result_payload,
 )
+from .coupled import (
+    coupled_capabilities,
+    COUPLED_RESULT_SCHEMA,
+    COUPLED_RESULT_SCHEMA_VERSION,
+    CoupledDynamicsDiagnostics,
+    CoupledRigidBodyDynamicsResult,
+    load_coupled_result_payload,
+    RigidBodyPairInteraction,
+    validate_coupled_result_payload,
+)
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
@@ -70,8 +80,14 @@ from .vocabulary import (
 __all__ = [
     "FixedJoint3D",
     "constraint_groups",
+    "coupled_capabilities",
+    "COUPLED_RESULT_SCHEMA",
+    "COUPLED_RESULT_SCHEMA_VERSION",
+    "CoupledDynamicsDiagnostics",
+    "CoupledRigidBodyDynamicsResult",
     "free_body_capabilities",
     "load_rigid_body_result_payload",
+    "load_coupled_result_payload",
     "DYNAMIC_RESULT_SCHEMA",
     "DYNAMIC_RESULT_SCHEMA_VERSION",
     "Frame3D",
@@ -79,6 +95,7 @@ __all__ = [
     "RIGID_BODY_RESULT_SCHEMA_VERSION",
     "RigidBodyDynamicsDiagnostics",
     "RigidBodyLoad",
+    "RigidBodyPairInteraction",
     "Pose3D",
     "Quaternion",
     "SphericalJoint3D",
@@ -95,6 +112,7 @@ __all__ = [
     "SpatialDynamicsResult",
     "SpatialRigidBodyDynamicsResult",
     "validate_rigid_body_result_payload",
+    "validate_coupled_result_payload",
     "SpatialForce",
     "SpatialModel",
     "SPATIAL_MODEL_SCHEMA",

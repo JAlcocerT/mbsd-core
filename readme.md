@@ -23,7 +23,7 @@ neutral CAD handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.9.2
+git checkout v0.9.3
 uv sync --extra dev
 ```
 
@@ -95,6 +95,8 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
   reaction histories, three-level residuals, and versioned exports in `0.9.1`.
 - Experimental unconstrained free-body rotation with quaternion integration,
   torque response, principal inertia, and conservation diagnostics in `0.9.2`.
+- Experimental unconstrained multi-body six-DOF dynamics with gravity, offset
+  centers of mass, pair interactions, and complete state export in `0.9.3`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
@@ -199,9 +201,40 @@ result = m.simulate_free_body(np.linspace(0.0, 1.0, 101), loads=(motor,))
 print(m.rigid_body_diagnostics(result).as_dict())
 ```
 
-This solver deliberately rejects ground bodies, joints, coordinate drives, and
-multiple bodies. Coupled six-DOF multi-body dynamics remains the `0.9.3`
-milestone; constrained rotational dynamics remains the `0.9.4` milestone.
+The `simulate_free_body()` solver deliberately remains a one-body API. Use
+`simulate_coupled_rigid_bodies()` for unconstrained multi-body motion. Both
+solvers reject ground bodies, joints, and coordinate drives; constrained
+rotational dynamics remains the `0.9.4` milestone.
+
+## Coupled Six-DOF Rigid Bodies
+
+MBSD `0.9.3` adds a separate unconstrained multi-body solver. Each body evolves
+its center-of-mass translation and body-to-world quaternion while retaining a
+distinct body reference-origin pose for offset-COM geometry. Gravity, external
+loads, torques, force-at-point moments, and equal-and-opposite pair interactions
+share explicit body/world frame conventions.
+
+```python
+import numpy as np
+
+from mbsd import Mechanism
+from mbsd.spatial import Pose3D
+
+m = Mechanism.spatial()
+a = m.body("a", mass=2.0, pose=Pose3D((-1.0, 0.0, 0.0)))
+b = m.body("b", mass=3.0, pose=Pose3D((1.0, 0.0, 0.0)))
+pair = m.pair_interaction(a, b, (6.0, 0.0, 0.0), name="pair")
+result = m.simulate_coupled_rigid_bodies(
+    np.linspace(0.0, 1.0, 51),
+    interactions=(pair,),
+    gravity_world=(0.0, 0.0, -9.81),
+)
+print(m.coupled_diagnostics(result).as_dict())
+```
+
+This solver remains unconstrained: ground bodies, joints, coordinate drives,
+contacts, and reaction forces are rejected. Those require the coupled
+constraint formulation planned for `0.9.4`.
 
 Planar dynamics uses the saddle-multiplier convention
 `M @ a + Cq.T @ lambda = Q`; exported generalized constraint reactions are the
