@@ -1,8 +1,8 @@
 {
-  "release": "0.9.3",
-  "core_ref": "v0.9.3",
-  "examples_ref": "v0.9.3",
-  "examples_core_range": ">=0.9.3,<0.10",
+  "release": "0.9.4",
+  "core_ref": "v0.9.4",
+  "examples_ref": "v0.9.4",
+  "examples_core_range": ">=0.9.4,<0.10",
   "schemas": {
     "mbsd.planar.mechanism": {
       "emitted": 1
@@ -43,6 +43,12 @@
       "readable": [1],
       "validation": "structural_and_semantic",
       "capability": "unconstrained_coupled_six_dof_rigid_body_dynamics"
+    },
+    "mbsd.spatial.constrained_rigid_body_dynamic_result": {
+      "emitted": 1,
+      "readable": [1],
+      "validation": "structural_and_semantic",
+      "capability": "constrained_spatial_rigid_body_dynamics"
     }
   }
 }

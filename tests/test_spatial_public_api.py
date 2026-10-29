@@ -146,6 +146,7 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
     assert payload["capabilities"]["joint_residual_jacobian"] == {
         "spherical": "analytic",
         "fixed": "analytic",
+        "revolute": "analytic",
     }
     assert payload["capabilities"]["general_spatial_solver"] is False
     assert payload["units"]["inertia"] == "kg*m^2"

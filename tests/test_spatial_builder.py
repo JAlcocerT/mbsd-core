@@ -13,6 +13,7 @@ from mbsd.spatial import (
     load_spatial_dynamic_result_payload,
     load_rigid_body_result_payload,
     load_coupled_result_payload,
+    load_constrained_result_payload,
     validate_coupled_result_payload,
     load_spatial_kinematic_result_payload,
     validate_spatial_kinematic_result_payload,
@@ -710,6 +711,130 @@ def test_coupled_dynamics_is_invariant_under_world_frame_transform():
         np.testing.assert_allclose(
             transformed_pose.rotation.to_rotation_matrix(),
             matrix @ base_pose.rotation.to_rotation_matrix(), atol=2e-9,
+        )
+
+
+def test_constrained_spherical_pendulum_preserves_energy_and_constraints():
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    rotation = Quaternion.from_axis_angle((0.0, 0.0, 1.0), 0.35)
+    pivot_local = np.array([0.0, 1.0, 0.0])
+    body = mechanism.body(
+        "pendulum", mass=1.0, inertia=(0.2, 0.2, 0.2),
+        pose=Pose3D(-rotation.rotate(pivot_local), rotation),
+    )
+    mechanism.spherical(ground, body, point_j=pivot_local, name="pivot")
+    result = mechanism.simulate_constrained_rigid_bodies(
+        np.linspace(0.0, 1.0, 101), gravity_world=(0.0, -9.81, 0.0),
+        stabilization_frequency=10.0, rtol=1e-10, atol=1e-12,
+    )
+    diagnostics = mechanism.constrained_diagnostics(result)
+    velocity = result.linear_velocity[:, 1]
+    omega = result.angular_velocity_body[:, 1]
+    energy = 0.5 * np.sum(velocity**2, axis=1) + 0.1 * np.sum(omega**2, axis=1) + 9.81 * result.center_of_mass_position[:, 1, 1]
+
+    assert np.max(np.abs(energy - energy[0])) < 2e-7
+    assert diagnostics.max_position_residual < 1e-8
+    assert diagnostics.max_velocity_residual < 1e-8
+    assert diagnostics.max_acceleration_residual < 5e-7
+
+
+def test_constrained_fixed_pair_behaves_as_composite_and_reactions_balance():
+    mechanism = Mechanism.spatial()
+    first = mechanism.body("first", mass=2.0)
+    second = mechanism.body("second", mass=3.0)
+    mechanism.fixed(first, second, name="weld")
+    load = mechanism.rigid_body_load(first, force=(10.0, 0.0, 0.0))
+    result = mechanism.simulate_constrained_rigid_bodies(
+        np.array([0.0, 0.5]), loads=(load,)
+    )
+
+    np.testing.assert_allclose(result.linear_acceleration[:, :, 0], 2.0, atol=2e-9)
+    np.testing.assert_allclose(
+        result.reaction_force_world[:, :, 0], [[-6.0, 6.0], [-6.0, 6.0]], atol=2e-9
+    )
+    np.testing.assert_allclose(result.angular_acceleration_body, 0.0, atol=2e-9)
+
+
+def test_constrained_ground_reaction_has_physical_sign():
+    mechanism = Mechanism.spatial()
+    mechanism.ground()
+    result = mechanism.simulate_constrained_rigid_bodies(
+        np.array([0.0, 0.1]), gravity_world=(0.0, -9.81, 0.0)
+    )
+
+    np.testing.assert_allclose(result.applied_force_world[:, 0, 1], -9.81, atol=1e-12)
+    np.testing.assert_allclose(result.reaction_force_world[:, 0, 1], 9.81, atol=1e-12)
+    np.testing.assert_allclose(result.reaction_torque_body, 0.0, atol=1e-12)
+
+
+def test_revolute_joint_torque_driven_motion_matches_analytic_solution(tmp_path):
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    rotor = mechanism.body("rotor", inertia=(2.0, 3.0, 4.0))
+    mechanism.revolute(ground, rotor, name="hinge")
+    motor = mechanism.rigid_body_load(rotor, torque=(0.0, 0.0, 4.0))
+    times = np.linspace(0.0, 1.0, 51)
+    result = mechanism.simulate_constrained_rigid_bodies(
+        times, loads=(motor,), rtol=1e-10, atol=1e-12
+    )
+    angles = np.asarray([
+        np.arctan2(pose.rotation.to_rotation_matrix()[1, 0], pose.rotation.to_rotation_matrix()[0, 0])
+        for pose in (step[1] for step in result.poses)
+    ])
+
+    np.testing.assert_allclose(result.angular_velocity_body[:, 1, 2], times, atol=2e-8)
+    np.testing.assert_allclose(angles, 0.5 * times**2, atol=2e-8)
+    assert mechanism.constrained_diagnostics(result).degrees_of_freedom == 1
+    path = mechanism.constrained_result_to_json(result, tmp_path / "hinge.json")
+    payload = load_constrained_result_payload(path)
+    assert payload["constraint_layout"][-1]["kind"] == "revolute"
+    assert payload["constraint_layout"][-1]["component"] == "ry"
+    assert payload["bodies"][1]["reaction_torque_body"]
+
+
+def test_revolute_joint_analytic_jacobian_matches_finite_difference():
+    mechanism = Mechanism.spatial()
+    first = mechanism.body("first", pose=Pose3D(rotation=Quaternion.from_axis_angle((1, 0, 0), 0.2)))
+    second = mechanism.body("second", pose=Pose3D(rotation=Quaternion.from_axis_angle((0, 1, 0), -0.15)))
+    joint = mechanism.revolute(first, second, name="hinge")
+    poses = mechanism._initial_poses()
+    analytic = mechanism.constraint_jacobian(poses)
+    numeric = np.zeros_like(analytic)
+    step = 1e-7
+    for column in range(mechanism.ncoord):
+        increment = np.zeros(mechanism.ncoord)
+        increment[column] = step
+        plus = mechanism.constraint_residual(mechanism._apply_increments(poses, increment))
+        increment[column] = -step
+        minus = mechanism.constraint_residual(mechanism._apply_increments(poses, increment))
+        numeric[:, column] = (plus - minus) / (2 * step)
+    np.testing.assert_allclose(analytic, numeric, atol=2e-7, rtol=2e-7)
+    assert joint.name == "hinge"
+
+
+def test_constrained_dynamics_rejects_duplicate_constraint_rows():
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    body = mechanism.body("body", pose=Pose3D((0.0, -1.0, 0.0)))
+    mechanism.spherical(ground, body, point_j=(0.0, 1.0, 0.0), name="pivot-a")
+    mechanism.spherical(ground, body, point_j=(0.0, 1.0, 0.0), name="pivot-b")
+
+    with pytest.raises(MechanismSolveError, match="rank-deficient"):
+        mechanism.simulate_constrained_rigid_bodies(np.array([0.0, 0.1]))
+
+
+def test_constrained_dynamics_rejects_incompatible_initial_velocity():
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    body = mechanism.body("body", pose=Pose3D((0.0, -1.0, 0.0)))
+    mechanism.spherical(ground, body, point_j=(0.0, 1.0, 0.0), name="pivot")
+
+    with pytest.raises(MechanismSolveError, match="Initial velocity"):
+        mechanism.simulate_constrained_rigid_bodies(
+            np.array([0.0, 0.1]),
+            linear_velocity0=np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            angular_velocity0_body=np.zeros((2, 3)),
         )
 
 

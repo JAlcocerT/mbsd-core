@@ -23,7 +23,7 @@ neutral CAD handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.9.3
+git checkout v0.9.4
 uv sync --extra dev
 ```
 
@@ -97,6 +97,8 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
   torque response, principal inertia, and conservation diagnostics in `0.9.2`.
 - Experimental unconstrained multi-body six-DOF dynamics with gravity, offset
   centers of mass, pair interactions, and complete state export in `0.9.3`.
+- Constrained spatial dynamics with spherical, fixed, and revolute joints,
+  physical reaction loads, projection, and stabilization controls in `0.9.4`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 Forward dynamics currently requires each body reference point to coincide with
@@ -233,8 +235,39 @@ print(m.coupled_diagnostics(result).as_dict())
 ```
 
 This solver remains unconstrained: ground bodies, joints, coordinate drives,
-contacts, and reaction forces are rejected. Those require the coupled
-constraint formulation planned for `0.9.4`.
+contacts, and reaction forces are rejected. Use
+`simulate_constrained_rigid_bodies()` for supported jointed mechanisms.
+
+## Constrained Rotational Dynamics
+
+MBSD `0.9.4` adds `simulate_constrained_rigid_bodies()` for small spatial
+mechanisms using spherical, fixed, and revolute joints. The solver assembles
+the mass/Jacobian saddle system in center-of-mass linear and body-angular
+coordinates, includes `Jdot*v`, and reports physical reactions as
+`-J.T*lambda` in world-force/body-moment components.
+
+Position and velocity projection are controlled independently from optional
+Baumgarte stabilization. Every choice is recorded in result provenance.
+Constraint rows carry stable names, components, body references, residual
+units, and multiplier units.
+
+```python
+import numpy as np
+
+from mbsd import Mechanism
+
+m = Mechanism.spatial()
+ground = m.ground()
+rotor = m.body("rotor", inertia=(2.0, 3.0, 4.0))
+m.revolute(ground, rotor, name="hinge")
+motor = m.rigid_body_load(rotor, torque=(0.0, 0.0, 4.0))
+result = m.simulate_constrained_rigid_bodies(
+    np.linspace(0.0, 1.0, 51), loads=(motor,)
+)
+print(m.constrained_diagnostics(result).as_dict())
+```
+
+Contact, collision, friction, and flexible-body dynamics remain unsupported.
 
 Planar dynamics uses the saddle-multiplier convention
 `M @ a + Cq.T @ lambda = Q`; exported generalized constraint reactions are the

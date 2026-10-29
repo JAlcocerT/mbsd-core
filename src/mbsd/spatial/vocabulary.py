@@ -281,7 +281,39 @@ class FixedJoint3D:
         return fixed_joint_descriptor_residual(self, poses)
 
 
-SpatialJoint3D = SphericalJoint3D | FixedJoint3D
+@dataclass(frozen=True)
+class RevoluteJoint3D:
+    """Five-row hinge: coincident frames with free relative local-Z rotation."""
+
+    name: str
+    body_i: int | None
+    body_j: int | None
+    frame_i: Pose3D = field(default_factory=Pose3D.identity)
+    frame_j: Pose3D = field(default_factory=Pose3D.identity)
+
+    def __post_init__(self) -> None:
+        _validate_joint_name_and_bodies(self.name, self.body_i, self.body_j)
+        if not isinstance(self.frame_i, Pose3D) or not isinstance(self.frame_j, Pose3D):
+            raise TypeError("revolute-joint frames must be Pose3D instances")
+
+    def as_dict(self, index: int | None = None) -> dict[str, Any]:
+        payload = {
+            "kind": "revolute", "name": self.name,
+            "body_i": self.body_i, "body_j": self.body_j,
+            "frame_i": self.frame_i.as_dict(), "frame_j": self.frame_j.as_dict(),
+            "free_axis": "local_z",
+        }
+        if index is not None:
+            payload["index"] = index
+        return payload
+
+    def residual(self, poses: list[Pose3D] | tuple[Pose3D, ...]) -> np.ndarray:
+        from .kinematics import revolute_joint_descriptor_residual
+
+        return revolute_joint_descriptor_residual(self, poses)
+
+
+SpatialJoint3D = SphericalJoint3D | FixedJoint3D | RevoluteJoint3D
 
 
 @dataclass(frozen=True)
@@ -339,8 +371,8 @@ class SpatialModel:
         )
 
     def with_joint(self, joint: SpatialJoint3D) -> "SpatialModel":
-        if not isinstance(joint, (SphericalJoint3D, FixedJoint3D)):
-            raise TypeError("joint must be a SphericalJoint3D or FixedJoint3D")
+        if not isinstance(joint, (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D)):
+            raise TypeError("joint must be a SphericalJoint3D, FixedJoint3D, or RevoluteJoint3D")
         self._validate_joint_references(joint)
         return SpatialModel(
             bodies=self.bodies,
@@ -369,9 +401,11 @@ class SpatialModel:
                 "point_velocity": True,
                 "spherical_joint_residual": True,
                 "fixed_joint_residual": True,
+                "revolute_joint_residual": True,
                 "joint_residual_jacobian": {
                     "spherical": "analytic",
                     "fixed": "analytic",
+                    "revolute": "analytic",
                 },
                 "general_spatial_solver": False,
                 "spatial_dynamics": False,
@@ -591,6 +625,14 @@ def _joint_from_payload(value: Any, index: int) -> SpatialJoint3D:
             frame_i=_pose_from_payload(_required(value, "frame_i", "joint"), "frame_i"),
             frame_j=_pose_from_payload(_required(value, "frame_j", "joint"), "frame_j"),
         )
+    if kind == "revolute":
+        if value.get("free_axis") != "local_z":
+            raise ValueError("revolute joint free_axis must be 'local_z'")
+        return RevoluteJoint3D(
+            **common,
+            frame_i=_pose_from_payload(_required(value, "frame_i", "joint"), "frame_i"),
+            frame_j=_pose_from_payload(_required(value, "frame_j", "joint"), "frame_j"),
+        )
     raise ValueError(f"unsupported joint kind {kind!r}")
 
 
@@ -685,8 +727,11 @@ def _validate_members(values: tuple[Any, ...], expected: type, name: str) -> Non
 
 def _validate_joint_members(joints: tuple[Any, ...]) -> None:
     for index, joint in enumerate(joints):
-        if not isinstance(joint, (SphericalJoint3D, FixedJoint3D)):
-            raise TypeError(f"joints[{index}] must be a SphericalJoint3D or FixedJoint3D")
+        if not isinstance(joint, (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D)):
+            raise TypeError(
+                f"joints[{index}] must be a SphericalJoint3D, FixedJoint3D, "
+                "or RevoluteJoint3D"
+            )
 
 
 def _validate_unique_names(values: tuple[Any, ...], kind: str) -> None:

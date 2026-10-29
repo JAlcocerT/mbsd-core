@@ -37,11 +37,19 @@ from .coupled import (
     coupled_result_to_json,
     simulate_coupled_rigid_bodies,
 )
+from .constrained import (
+    ConstrainedRigidBodyDynamicsResult,
+    constrained_diagnostics,
+    constrained_result_to_dict,
+    constrained_result_to_json,
+    simulate_constrained_rigid_bodies,
+)
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
     Pose3D,
     Quaternion,
+    RevoluteJoint3D,
     SpatialBody,
     SpatialModel,
     SphericalJoint3D,
@@ -257,7 +265,7 @@ class SpatialMechanism:
     def __init__(self) -> None:
         self._bodies: list[SpatialBody] = []
         self._frames: list[Frame3D] = []
-        self._joints: list[SphericalJoint3D | FixedJoint3D] = []
+        self._joints: list[SphericalJoint3D | FixedJoint3D | RevoluteJoint3D] = []
         self._drives: list[SpatialCoordinateDrive] = []
         self._ground: int | None = None
 
@@ -279,7 +287,8 @@ class SpatialMechanism:
                 "fixed_orientation_translational_dynamics": True,
                 "free_body_rotational_dynamics": True,
                 "coupled_six_dof_rigid_body_dynamics": True,
-                "joint_types": ("spherical", "fixed"),
+                "constrained_rotational_dynamics": True,
+                "joint_types": ("spherical", "fixed", "revolute"),
                 "velocity_frame": "world",
             }
         )
@@ -356,6 +365,24 @@ class SpatialMechanism:
             name or f"fixed-{len(self._joints)}",
             self._idx_optional(body_i),
             self._idx_optional(body_j),
+            Pose3D.identity() if frame_i is None else frame_i,
+            Pose3D.identity() if frame_j is None else frame_j,
+        )
+        self._add_joint(joint)
+        return joint
+
+    def revolute(
+        self,
+        body_i: int | SpatialBodyHandle | None,
+        body_j: int | SpatialBodyHandle | None,
+        *,
+        frame_i: Pose3D | None = None,
+        frame_j: Pose3D | None = None,
+        name: str | None = None,
+    ) -> RevoluteJoint3D:
+        joint = RevoluteJoint3D(
+            name or f"revolute-{len(self._joints)}",
+            self._idx_optional(body_i), self._idx_optional(body_j),
             Pose3D.identity() if frame_i is None else frame_i,
             Pose3D.identity() if frame_j is None else frame_j,
         )
@@ -648,6 +675,20 @@ class SpatialMechanism:
     def coupled_result_to_json(self, result, path: str | Path, *, indent: int = 2):
         return coupled_result_to_json(self, result, path, indent=indent)
 
+    def simulate_constrained_rigid_bodies(
+        self, t: np.ndarray, **options,
+    ) -> ConstrainedRigidBodyDynamicsResult:
+        return simulate_constrained_rigid_bodies(self, t, **options)
+
+    def constrained_diagnostics(self, result: ConstrainedRigidBodyDynamicsResult):
+        return constrained_diagnostics(self, result)
+
+    def constrained_result_to_dict(self, result: ConstrainedRigidBodyDynamicsResult):
+        return constrained_result_to_dict(self, result)
+
+    def constrained_result_to_json(self, result, path: str | Path, *, indent: int = 2):
+        return constrained_result_to_json(self, result, path, indent=indent)
+
     def constraint_residual(
         self, poses: Iterable[Pose3D], t: float = 0.0
     ) -> np.ndarray:
@@ -763,6 +804,8 @@ class SpatialMechanism:
             layout.extend(["translation"] * 3)
             if isinstance(joint, FixedJoint3D):
                 layout.extend(["rotation"] * 3)
+            elif isinstance(joint, RevoluteJoint3D):
+                layout.extend(["rotation"] * 2)
         layout.extend(["translation"] * len(self._drives))
         return layout
 
@@ -888,7 +931,9 @@ class SpatialMechanism:
     ) -> Path:
         return _write_json(self.result_to_dict(result), path, indent)
 
-    def _add_joint(self, joint: SphericalJoint3D | FixedJoint3D) -> None:
+    def _add_joint(
+        self, joint: SphericalJoint3D | FixedJoint3D | RevoluteJoint3D
+    ) -> None:
         if any(existing.name == joint.name for existing in self._joints):
             raise ValueError(f"joint name {joint.name!r} is already in use")
         self._joints.append(joint)
@@ -1217,8 +1262,12 @@ def _validate_result_capabilities(capabilities: Mapping[str, Any]) -> None:
     }
     if any(capabilities.get(name) != value for name, value in expected.items()):
         raise ValueError("capabilities do not match the spatial kinematics contract")
-    if capabilities.get("joint_types") not in (("spherical", "fixed"), ["spherical", "fixed"]):
-        raise ValueError("capabilities.joint_types must contain spherical and fixed")
+    if capabilities.get("joint_types") not in (
+        ("spherical", "fixed", "revolute"), ["spherical", "fixed", "revolute"]
+    ):
+        raise ValueError(
+            "capabilities.joint_types must contain spherical, fixed, and revolute"
+        )
 
 
 def _pose_from_result_payload(payload: Any) -> Pose3D:

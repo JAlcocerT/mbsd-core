@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.9.4 - Constrained Rotational Dynamics
+
+- Add coupled Lagrange-multiplier dynamics for spatial rigid bodies with
+  position-, velocity-, and acceleration-level constraints.
+- Transform analytic joint Jacobians into the center-of-mass/world-linear and
+  body-angular velocity basis and include the full directional `Jdot*v` bias.
+- Export physical reaction forces and body-frame reaction moments using the
+  documented `-J.T*lambda` convention.
+- Add independent position and velocity projection plus configurable,
+  provenance-recorded Baumgarte stabilization.
+- Promote spherical and fixed joints to constrained dynamics and add an
+  analytic five-row revolute joint with a free local-Z hinge axis.
+- Add a versioned constrained-result schema with mixed-unit row identities,
+  multipliers, reactions, residuals, complete body state, and solver controls.
+- Validate a gravity-driven spherical/physical pendulum, fixed composite body,
+  equilibrium reaction signs, analytic torque-driven hinge motion, and the
+  revolute Jacobian against finite differences.
+- Keep contact, collision, friction, and flexible bodies outside the framework.
+
 ## v0.9.3 - Coupled Six-DOF Rigid-Body Dynamics
 
 - Add an unconstrained multi-body solver coupling center-of-mass translation,

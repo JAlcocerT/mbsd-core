@@ -6,7 +6,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .vocabulary import FixedJoint3D, Frame3D, Pose3D, Quaternion, SphericalJoint3D
+from .vocabulary import (
+    FixedJoint3D, Frame3D, Pose3D, Quaternion, RevoluteJoint3D, SphericalJoint3D,
+)
 
 
 def point_position(pose: Pose3D, local_point: np.ndarray) -> np.ndarray:
@@ -112,8 +114,22 @@ def fixed_joint_descriptor_residual(
     return np.concatenate((frame_i.translation - frame_j.translation, rotation_vector))
 
 
+def revolute_joint_descriptor_residual(
+    joint: RevoluteJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+) -> np.ndarray:
+    """Return three frame-position and two hinge-axis rotation residuals."""
+    if not isinstance(joint, RevoluteJoint3D):
+        raise TypeError("joint must be a RevoluteJoint3D")
+    fixed = FixedJoint3D(
+        joint.name, joint.body_i, joint.body_j, joint.frame_i, joint.frame_j
+    )
+    residual = fixed_joint_descriptor_residual(fixed, poses)
+    return np.concatenate((residual[:3], residual[3:5]))
+
+
 def joint_residual_jacobian(
-    joint: SphericalJoint3D | FixedJoint3D,
+    joint: SphericalJoint3D | FixedJoint3D | RevoluteJoint3D,
     poses: list[Pose3D] | tuple[Pose3D, ...],
     *,
     step: float = 1e-7,
@@ -125,8 +141,8 @@ def joint_residual_jacobian(
     Spherical- and fixed-joint blocks are analytic. Fixed-joint rotation uses
     the local SO(3) logarithm chart and rejects the ambiguous 180-degree branch.
     """
-    if not isinstance(joint, (SphericalJoint3D, FixedJoint3D)):
-        raise TypeError("joint must be a SphericalJoint3D or FixedJoint3D")
+    if not isinstance(joint, (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D)):
+        raise TypeError("joint must be spherical, fixed, or revolute")
     if not isinstance(poses, (list, tuple)) or not all(
         isinstance(pose, Pose3D) for pose in poses
     ):
@@ -136,7 +152,13 @@ def joint_residual_jacobian(
         raise ValueError("step must be a positive finite scalar")
     if isinstance(joint, SphericalJoint3D):
         return _spherical_joint_residual_jacobian(joint, poses)
-    return _fixed_joint_residual_jacobian(joint, poses)
+    if isinstance(joint, FixedJoint3D):
+        return _fixed_joint_residual_jacobian(joint, poses)
+    fixed = FixedJoint3D(
+        joint.name, joint.body_i, joint.body_j, joint.frame_i, joint.frame_j
+    )
+    full = _fixed_joint_residual_jacobian(fixed, poses)
+    return np.vstack((full[:3], full[3:5]))
 
 
 def _spherical_joint_residual_jacobian(
