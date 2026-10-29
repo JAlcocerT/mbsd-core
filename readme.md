@@ -11,12 +11,12 @@ declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
 The stable solver API is intentionally focused on **2D planar mechanisms**.
-Core also contains experimental constrained spatial kinematics and a narrowly
-named fixed-orientation translational-dynamics preview. It is not yet a coupled
-six-DOF rigid-body solver. Plotting, gallery, browser UI, larger synthesis
-workflows, and CAD-specific integrations remain separate while the API
-stabilizes. Portable JSON and CSV exports support downstream applications and
-neutral CAD handoffs.
+Core also contains experimental spatial kinematics and explicitly named
+fixed-orientation, free-body, unconstrained coupled six-DOF, and constrained
+six-DOF solvers. Plotting, gallery, browser UI, larger synthesis workflows,
+and CAD-specific integrations remain separate while the API stabilizes.
+Portable JSON and CSV exports support downstream applications and neutral CAD
+handoffs.
 
 ## Install
 
@@ -205,8 +205,9 @@ print(m.rigid_body_diagnostics(result).as_dict())
 
 The `simulate_free_body()` solver deliberately remains a one-body API. Use
 `simulate_coupled_rigid_bodies()` for unconstrained multi-body motion. Both
-solvers reject ground bodies, joints, and coordinate drives; constrained
-rotational dynamics remains the `0.9.4` milestone.
+solvers reject ground bodies, joints, and coordinate drives. Use the separate
+`simulate_constrained_rigid_bodies()` API added in `0.9.4` for supported
+jointed mechanisms.
 
 ## Coupled Six-DOF Rigid Bodies
 
@@ -233,6 +234,13 @@ result = m.simulate_coupled_rigid_bodies(
 )
 print(m.coupled_diagnostics(result).as_dict())
 ```
+
+Coupled-result schema version 2 binds in-memory results to their originating
+mechanism and publishes three deliberately separate identities: `model_id`
+for structure, `excitation_id` for sampled loads, and `simulation_id` for the
+complete initial state, effective inertia, time grid, and solver controls.
+Per-interaction force histories make the equal-and-opposite construction
+portable and independently checkable by readers.
 
 This solver remains unconstrained: ground bodies, joints, coordinate drives,
 contacts, and reaction forces are rejected. Use

@@ -283,11 +283,29 @@ class SpatialMechanism:
             {
                 "position_solve": True,
                 "velocity_solve": True,
+                "general_spatial_dynamics": False,
                 "spatial_dynamics": False,
+                "constrained_spatial_dynamics": True,
                 "fixed_orientation_translational_dynamics": True,
                 "free_body_rotational_dynamics": True,
                 "coupled_six_dof_rigid_body_dynamics": True,
                 "constrained_rotational_dynamics": True,
+                "solver_kinds": MappingProxyType(
+                    {
+                        "fixed_orientation": MappingProxyType(
+                            {"rotation": False, "constraints": True, "multiple_bodies": True}
+                        ),
+                        "free_body": MappingProxyType(
+                            {"rotation": True, "constraints": False, "multiple_bodies": False}
+                        ),
+                        "coupled_six_dof": MappingProxyType(
+                            {"rotation": True, "constraints": False, "multiple_bodies": True}
+                        ),
+                        "constrained_six_dof": MappingProxyType(
+                            {"rotation": True, "constraints": True, "multiple_bodies": True}
+                        ),
+                    }
+                ),
                 "joint_types": ("spherical", "fixed", "revolute"),
                 "velocity_frame": "world",
             }

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 COUPLED_RESULT_SCHEMA = "mbsd.spatial.coupled_rigid_body_dynamic_result"
-COUPLED_RESULT_SCHEMA_VERSION = 1
+COUPLED_RESULT_SCHEMA_VERSION = 2
 PairForceLaw = Callable[[float, tuple[Pose3D, ...], np.ndarray, np.ndarray], Iterable[float]]
 
 
@@ -78,9 +78,11 @@ class CoupledRigidBodyDynamicsResult:
     angular_acceleration_body: np.ndarray
     applied_force_world: np.ndarray
     applied_torque_body: np.ndarray
+    interaction_force_world: np.ndarray
     inertia_tensor_body: np.ndarray
     model_id: str
     excitation_id: str
+    simulation_id: str
     success: bool
     message: str
     provenance: Mapping[str, Any] = field(default_factory=dict)
@@ -90,7 +92,7 @@ class CoupledRigidBodyDynamicsResult:
         for name in (
             "t", "center_of_mass_position", "linear_velocity", "angular_velocity_body",
             "linear_acceleration", "angular_acceleration_body", "applied_force_world",
-            "applied_torque_body", "inertia_tensor_body",
+            "applied_torque_body", "interaction_force_world", "inertia_tensor_body",
         ):
             array = np.asarray(getattr(self, name), dtype=float)
             object.__setattr__(self, name, np.frombuffer(array.tobytes(), dtype=float).reshape(array.shape))
@@ -108,7 +110,7 @@ class CoupledDynamicsDiagnostics:
     relative_kinetic_energy_change: float
     relative_linear_momentum_change: float
     relative_angular_momentum_change: float
-    max_internal_force_imbalance_n: float
+    pair_force_balance_residual_n: float
     finite: bool
     success: bool
 
@@ -121,6 +123,7 @@ def coupled_capabilities() -> Mapping[str, Any]:
         "solver_kind": "unconstrained_coupled_six_dof_rigid_body_dynamics",
         "translation_dynamics": True, "orientation_dynamics": True,
         "multiple_bodies": True, "pair_interactions": True, "gravity": True,
+        "pair_force_histories": True,
         "force_at_point": True, "offset_center_of_mass": True,
         "constraints": False, "contact": False,
         "orientation": "active_body_to_world_quaternion_wxyz",
@@ -194,9 +197,10 @@ def simulate_coupled_rigid_bodies(
             force_i, torque_i = load.evaluate(ti, poses[load.body], velocity[load.body], omega[load.body])
             force[load.body] += force_i
             torque[load.body] += torque_i
-        internal_imbalance = np.zeros(3)
-        for interaction in interaction_values:
+        interaction_forces = np.zeros((len(interaction_values), 3))
+        for interaction_index, interaction in enumerate(interaction_values):
             value = interaction.evaluate(ti, poses, velocity, omega)
+            interaction_forces[interaction_index] = value
             i, j = interaction.body_i, interaction.body_j
             force[i] += value
             force[j] -= value
@@ -204,7 +208,6 @@ def simulate_coupled_rigid_bodies(
             force_j_body = rotations[j].T @ (-value)
             torque[i] += np.cross(interaction.point_i_from_com_body, force_i_body)
             torque[j] += np.cross(interaction.point_j_from_com_body, force_j_body)
-            internal_imbalance += value - value
         linear_acceleration = force / masses[:, None]
         angular_acceleration = np.asarray([
             np.linalg.solve(inertias[index], torque[index] - np.cross(omega[index], inertias[index] @ omega[index]))
@@ -214,7 +217,7 @@ def simulate_coupled_rigid_bodies(
             0.5 * _quaternion_product(quaternion[index], np.array([0.0, *omega[index]]))
             for index in range(count)
         ])
-        return linear_acceleration, angular_acceleration, quaternion_rate, force, torque, poses, internal_imbalance
+        return linear_acceleration, angular_acceleration, quaternion_rate, force, torque, poses, interaction_forces
 
     def rhs(ti, state):
         _, _, velocity, _ = unpack(state)
@@ -239,14 +242,14 @@ def simulate_coupled_rigid_bodies(
     force_history = np.zeros_like(linear_acceleration)
     torque_history = np.zeros_like(linear_acceleration)
     pose_history: list[tuple[Pose3D, ...]] = []
-    imbalance_history: list[np.ndarray] = []
+    interaction_force_history = np.zeros((len(times), len(interaction_values), 3))
     for time_index, ti in enumerate(times):
         for body_index in range(count):
             states[time_index, body_index, 3:7] = _normalized_quaternion(states[time_index, body_index, 3:7])
         evaluated = evaluate(float(ti), states[time_index].reshape(-1))
-        linear_acceleration[time_index], angular_acceleration[time_index], _, force_history[time_index], torque_history[time_index], poses, imbalance = evaluated
+        linear_acceleration[time_index], angular_acceleration[time_index], _, force_history[time_index], torque_history[time_index], poses, interaction_forces = evaluated
         pose_history.append(poses)
-        imbalance_history.append(imbalance)
+        interaction_force_history[time_index] = interaction_forces
     provenance = MappingProxyType({
         "solver": "scipy.solve_ivp", "method": method, "rtol": float(rtol), "atol": float(atol),
         "quaternion_normalization": "rhs_and_output_samples", "angular_velocity_frame": "body",
@@ -254,7 +257,7 @@ def simulate_coupled_rigid_bodies(
         "load_count": len(load_values), "interaction_count": len(interaction_values),
         "load_descriptors": tuple(MappingProxyType(value.as_dict()) for value in load_values),
         "interaction_descriptors": tuple(MappingProxyType(value.as_dict()) for value in interaction_values),
-        "max_internal_force_imbalance_n": float(np.max(np.abs(imbalance_history))) if imbalance_history else 0.0,
+        "pair_force_contract": "exported_force_on_i_and_exact_negative_on_j",
     })
     excitation_payload = {
         "time": times.tolist(), "gravity_world": gravity.tolist(),
@@ -262,22 +265,34 @@ def simulate_coupled_rigid_bodies(
         "interactions": [value.as_dict() for value in interaction_values],
         "applied_force_samples": force_history.tolist(),
         "applied_torque_samples": torque_history.tolist(),
+        "interaction_force_samples": interaction_force_history.tolist(),
+    }
+    excitation_id = hashlib.sha256(json.dumps(excitation_payload, sort_keys=True).encode()).hexdigest()[:16]
+    simulation_payload = {
+        "model_id": mechanism.model_id(), "excitation_id": excitation_id,
+        "initial_center_of_mass_position": com0.tolist(),
+        "initial_orientation_wxyz": quaternion0.tolist(),
+        "initial_linear_velocity_world": velocity0.tolist(),
+        "initial_angular_velocity_body": omega0.tolist(),
+        "effective_inertia_tensor_body": inertias.tolist(),
+        "time": times.tolist(), "method": method, "rtol": float(rtol), "atol": float(atol),
     }
     return CoupledRigidBodyDynamicsResult(
         t=times, poses=tuple(pose_history), center_of_mass_position=com_history,
         linear_velocity=velocity_history, angular_velocity_body=omega_history,
         linear_acceleration=linear_acceleration, angular_acceleration_body=angular_acceleration,
         applied_force_world=force_history, applied_torque_body=torque_history,
+        interaction_force_world=interaction_force_history,
         inertia_tensor_body=inertias, success=True, message="converged",
         model_id=mechanism.model_id(),
-        excitation_id=hashlib.sha256(json.dumps(excitation_payload, sort_keys=True).encode()).hexdigest()[:16],
+        excitation_id=excitation_id,
+        simulation_id=hashlib.sha256(json.dumps(simulation_payload, sort_keys=True).encode()).hexdigest()[:16],
         provenance=provenance, capabilities=coupled_capabilities(),
     )
 
 
 def coupled_diagnostics(mechanism: SpatialMechanism, result: CoupledRigidBodyDynamicsResult) -> CoupledDynamicsDiagnostics:
-    if not isinstance(result, CoupledRigidBodyDynamicsResult) or result.center_of_mass_position.shape[1] != mechanism.nbody:
-        raise ValueError("result does not match this mechanism")
+    _validate_coupled_result(mechanism, result)
     masses = np.asarray([body.mass for body in mechanism._bodies])
     rotations = np.asarray([[pose.rotation.to_rotation_matrix() for pose in step] for step in result.poses])
     quaternions = np.asarray([[pose.rotation.as_array() for pose in step] for step in result.poses])
@@ -295,7 +310,7 @@ def coupled_diagnostics(mechanism: SpatialMechanism, result: CoupledRigidBodyDyn
         relative_kinetic_energy_change=_relative_change(energy),
         relative_linear_momentum_change=_relative_vector_change(momentum),
         relative_angular_momentum_change=_relative_vector_change(angular_momentum),
-        max_internal_force_imbalance_n=float(result.provenance["max_internal_force_imbalance_n"]),
+        pair_force_balance_residual_n=_pair_force_imbalance(result.interaction_force_world),
         finite=all(np.all(np.isfinite(value)) for value in (result.t, result.center_of_mass_position, result.linear_velocity, result.angular_velocity_body)),
         success=result.success,
     )
@@ -307,11 +322,18 @@ def coupled_result_to_dict(mechanism: SpatialMechanism, result: CoupledRigidBody
         "schema": COUPLED_RESULT_SCHEMA, "schema_version": COUPLED_RESULT_SCHEMA_VERSION,
         "mbsd_version": _package_version(), "model_id": result.model_id,
         "excitation_id": result.excitation_id,
+        "simulation_id": result.simulation_id,
+        "identity_scope": {
+            "model_id": "mechanism topology, body properties, and authored poses",
+            "excitation_id": "time grid, gravity, load and interaction descriptors, and sampled loads",
+            "simulation_id": "model and excitation identities, complete initial state, effective inertia, time grid, and solver controls",
+        },
         "status": "experimental", "solver_kind": "unconstrained_coupled_six_dof_rigid_body_dynamics",
         "units": {"length": "m", "time": "s", "linear_velocity": "m/s", "angular_velocity": "rad/s", "linear_acceleration": "m/s^2", "angular_acceleration": "rad/s^2", "force": "N", "torque": "N*m", "inertia": "kg*m^2"},
         "conventions": {"world_frame": "right_handed_xyz", "quaternion_order": ["w", "x", "y", "z"], "orientation": "active_body_to_world", "translation_state": "center_of_mass_world", "body_pose_translation": "body_reference_origin_world", "angular_velocity_frame": "body", "inertia_frame": "body"},
         "capabilities": dict(result.capabilities), "solver_status": {"success": result.success, "message": result.message},
         "provenance": _json_ready(result.provenance), "diagnostics": diagnostics.as_dict(), "time": result.t.tolist(),
+        "interaction_force_world": result.interaction_force_world.tolist(),
         "bodies": [{
             "index": index, "name": body.name, "mass": body.mass,
             "center_of_mass_body": body.center_of_mass.tolist(),
@@ -336,19 +358,26 @@ def coupled_result_to_json(mechanism, result, path: str | Path, *, indent: int =
 
 
 def validate_coupled_result_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    if not isinstance(payload, Mapping) or payload.get("schema") != COUPLED_RESULT_SCHEMA or payload.get("schema_version") != 1:
+    if not isinstance(payload, Mapping) or payload.get("schema") != COUPLED_RESULT_SCHEMA or payload.get("schema_version") != 2:
         raise ValueError("unsupported coupled rigid-body result schema")
     if payload.get("solver_kind") != "unconstrained_coupled_six_dof_rigid_body_dynamics" or payload.get("capabilities") != dict(coupled_capabilities()):
         raise ValueError("invalid coupled rigid-body solver contract")
-    for name in ("mbsd_version", "model_id", "excitation_id"):
+    for name in ("mbsd_version", "model_id", "excitation_id", "simulation_id"):
         if not isinstance(payload.get(name), str) or not payload[name]:
             raise ValueError(f"{name} must be a non-empty string")
+    expected_identity_scope = {
+        "model_id": "mechanism topology, body properties, and authored poses",
+        "excitation_id": "time grid, gravity, load and interaction descriptors, and sampled loads",
+        "simulation_id": "model and excitation identities, complete initial state, effective inertia, time grid, and solver controls",
+    }
+    if payload.get("identity_scope") != expected_identity_scope:
+        raise ValueError("coupled result identity scope is invalid")
     expected_units = {"length": "m", "time": "s", "linear_velocity": "m/s", "angular_velocity": "rad/s", "linear_acceleration": "m/s^2", "angular_acceleration": "rad/s^2", "force": "N", "torque": "N*m", "inertia": "kg*m^2"}
     expected_conventions = {"world_frame": "right_handed_xyz", "quaternion_order": ["w", "x", "y", "z"], "orientation": "active_body_to_world", "translation_state": "center_of_mass_world", "body_pose_translation": "body_reference_origin_world", "angular_velocity_frame": "body", "inertia_frame": "body"}
     if payload.get("units") != expected_units or payload.get("conventions") != expected_conventions:
         raise ValueError("coupled result units or conventions are invalid")
     provenance = payload.get("provenance")
-    required_provenance = {"solver", "method", "rtol", "atol", "quaternion_normalization", "angular_velocity_frame", "inertia_frame", "gravity_world", "load_count", "interaction_count", "load_descriptors", "interaction_descriptors", "max_internal_force_imbalance_n"}
+    required_provenance = {"solver", "method", "rtol", "atol", "quaternion_normalization", "angular_velocity_frame", "inertia_frame", "gravity_world", "load_count", "interaction_count", "load_descriptors", "interaction_descriptors", "pair_force_contract"}
     if not isinstance(provenance, Mapping) or not required_provenance <= provenance.keys():
         raise ValueError("coupled result provenance is incomplete")
     if provenance.get("solver") != "scipy.solve_ivp" or provenance.get("method") not in {"RK45", "DOP853", "Radau"}:
@@ -377,9 +406,12 @@ def validate_coupled_result_payload(payload: Mapping[str, Any]) -> dict[str, Any
     for descriptor in provenance["interaction_descriptors"]:
         if not isinstance(descriptor, Mapping) or descriptor.get("body_i") not in range(len(bodies)) or descriptor.get("body_j") not in range(len(bodies)) or descriptor.get("body_i") == descriptor.get("body_j") or descriptor.get("frame") != "world" or descriptor.get("force_pair") != "equal_and_opposite":
             raise ValueError("interaction descriptor is invalid")
-    imbalance = provenance.get("max_internal_force_imbalance_n")
-    if not isinstance(imbalance, (int, float)) or not np.isfinite(imbalance) or imbalance < 0:
-        raise ValueError("internal force imbalance provenance is invalid")
+    if provenance.get("pair_force_contract") != "exported_force_on_i_and_exact_negative_on_j":
+        raise ValueError("pair force contract provenance is invalid")
+    interaction_forces = np.asarray(payload.get("interaction_force_world"), dtype=float)
+    expected_interaction_shape = (len(times), provenance["interaction_count"], 3)
+    if interaction_forces.shape != expected_interaction_shape or not np.all(np.isfinite(interaction_forces)):
+        raise ValueError("interaction_force_world has invalid shape or values")
     names: set[str] = set()
     masses: list[float] = []
     inertias: list[np.ndarray] = []
@@ -387,6 +419,9 @@ def validate_coupled_result_payload(payload: Mapping[str, Any]) -> dict[str, Any
     velocities: list[np.ndarray] = []
     omegas: list[np.ndarray] = []
     rotations_by_body: list[np.ndarray] = []
+    applied_forces: list[np.ndarray] = []
+    applied_torques: list[np.ndarray] = []
+    initial_quaternions: list[list[float]] = []
     for index, body in enumerate(bodies):
         if not isinstance(body, Mapping) or body.get("index") != index or not isinstance(body.get("name"), str) or not body["name"] or body["name"] in names:
             raise ValueError("body identities must be ordered, named, and unique")
@@ -431,6 +466,10 @@ def validate_coupled_result_payload(payload: Mapping[str, Any]) -> dict[str, Any
         velocities.append(arrays["linear_velocity"])
         omegas.append(arrays["angular_velocity_body"])
         rotations_by_body.append(np.asarray(body_rotations))
+        applied_forces.append(arrays["applied_force_world"])
+        applied_torques.append(arrays["applied_torque_body"])
+        first_rotation = body["poses"][0]["rotation"]
+        initial_quaternions.append([first_rotation[key] for key in ("w", "x", "y", "z")])
     diagnostics = payload.get("diagnostics")
     status = payload.get("solver_status")
     if not isinstance(diagnostics, Mapping) or diagnostics.get("steps") != len(times) or diagnostics.get("bodies") != len(bodies):
@@ -443,6 +482,36 @@ def validate_coupled_result_payload(payload: Mapping[str, Any]) -> dict[str, Any
     omega_array = np.stack(omegas, axis=1)
     rotation_array = np.stack(rotations_by_body, axis=1)
     inertia_array = np.asarray(inertias)
+    applied_force_array = np.stack(applied_forces, axis=1)
+    applied_torque_array = np.stack(applied_torques, axis=1)
+    excitation_payload = {
+        "time": times.tolist(), "gravity_world": list(provenance["gravity_world"]),
+        "loads": list(provenance["load_descriptors"]),
+        "interactions": list(provenance["interaction_descriptors"]),
+        "applied_force_samples": applied_force_array.tolist(),
+        "applied_torque_samples": applied_torque_array.tolist(),
+        "interaction_force_samples": interaction_forces.tolist(),
+    }
+    expected_excitation_id = hashlib.sha256(
+        json.dumps(excitation_payload, sort_keys=True).encode()
+    ).hexdigest()[:16]
+    if payload["excitation_id"] != expected_excitation_id:
+        raise ValueError("excitation_id does not match exported load histories")
+    simulation_payload = {
+        "model_id": payload["model_id"], "excitation_id": payload["excitation_id"],
+        "initial_center_of_mass_position": com_array[0].tolist(),
+        "initial_orientation_wxyz": initial_quaternions,
+        "initial_linear_velocity_world": velocity_array[0].tolist(),
+        "initial_angular_velocity_body": omega_array[0].tolist(),
+        "effective_inertia_tensor_body": inertia_array.tolist(),
+        "time": times.tolist(), "method": provenance["method"],
+        "rtol": float(provenance["rtol"]), "atol": float(provenance["atol"]),
+    }
+    expected_simulation_id = hashlib.sha256(
+        json.dumps(simulation_payload, sort_keys=True).encode()
+    ).hexdigest()[:16]
+    if payload["simulation_id"] != expected_simulation_id:
+        raise ValueError("simulation_id does not match exported run configuration")
     kinetic = 0.5 * np.sum(mass_array[None, :, None] * velocity_array**2, axis=(1, 2)) + 0.5 * np.einsum("tbi,bij,tbj->t", omega_array, inertia_array, omega_array)
     momentum = np.sum(mass_array[None, :, None] * velocity_array, axis=1)
     spin = np.einsum("tbij,bjk,tbk->tbi", rotation_array, inertia_array, omega_array)
@@ -453,7 +522,7 @@ def validate_coupled_result_payload(payload: Mapping[str, Any]) -> dict[str, Any
         "relative_kinetic_energy_change": _relative_change(kinetic),
         "relative_linear_momentum_change": _relative_vector_change(momentum),
         "relative_angular_momentum_change": _relative_vector_change(angular_momentum),
-        "max_internal_force_imbalance_n": float(provenance["max_internal_force_imbalance_n"]),
+        "pair_force_balance_residual_n": _pair_force_imbalance(interaction_forces),
     }
     for name, expected in expected_diagnostics.items():
         if not np.isclose(diagnostics.get(name, np.nan), expected, atol=1e-10, rtol=1e-10):
@@ -466,6 +535,47 @@ def validate_coupled_result_payload(payload: Mapping[str, Any]) -> dict[str, Any
 
 def load_coupled_result_payload(path: str | Path) -> dict[str, Any]:
     return validate_coupled_result_payload(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+def _validate_coupled_result(mechanism, result):
+    if not isinstance(result, CoupledRigidBodyDynamicsResult):
+        raise ValueError("result does not match this mechanism")
+    if result.model_id != mechanism.model_id():
+        raise ValueError("result model_id does not match this mechanism")
+    steps = len(result.t)
+    bodies = mechanism.nbody
+    histories = {
+        "center_of_mass_position": (steps, bodies, 3),
+        "linear_velocity": (steps, bodies, 3),
+        "angular_velocity_body": (steps, bodies, 3),
+        "linear_acceleration": (steps, bodies, 3),
+        "angular_acceleration_body": (steps, bodies, 3),
+        "applied_force_world": (steps, bodies, 3),
+        "applied_torque_body": (steps, bodies, 3),
+        "interaction_force_world": (steps, result.interaction_force_world.shape[1], 3),
+        "inertia_tensor_body": (bodies, 3, 3),
+    }
+    if np.asarray(result.t).shape != (steps,) or steps < 2 or not np.all(np.isfinite(result.t)):
+        raise ValueError("coupled result time history is invalid")
+    for name, shape in histories.items():
+        values = np.asarray(getattr(result, name))
+        if values.shape != shape or not np.all(np.isfinite(values)):
+            raise ValueError(f"coupled result {name} is invalid")
+    if len(result.poses) != steps or any(len(step) != bodies for step in result.poses):
+        raise ValueError("coupled result pose history is invalid")
+    for step in result.poses:
+        for pose in step:
+            if not isinstance(pose, Pose3D):
+                raise ValueError("coupled result pose history is invalid")
+
+
+def _pair_force_imbalance(interaction_forces):
+    """Measure the net force after reconstructing both sides of every pair."""
+    values = np.asarray(interaction_forces, dtype=float)
+    if not values.size:
+        return 0.0
+    paired = np.stack((values, -values), axis=2)
+    return float(np.max(np.abs(np.sum(paired, axis=(1, 2)))))
 
 
 def _matrix3(value, count, name):

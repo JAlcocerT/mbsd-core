@@ -39,8 +39,8 @@
       "capability": "unconstrained_free_rigid_body_dynamics"
     },
     "mbsd.spatial.coupled_rigid_body_dynamic_result": {
-      "emitted": 1,
-      "readable": [1],
+      "emitted": 2,
+      "readable": [2],
       "validation": "structural_and_semantic",
       "capability": "unconstrained_coupled_six_dof_rigid_body_dynamics"
     },

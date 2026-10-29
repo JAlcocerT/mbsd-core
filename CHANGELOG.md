@@ -14,6 +14,11 @@
   analytic five-row revolute joint with a free local-Z hinge axis.
 - Add a versioned constrained-result schema with mixed-unit row identities,
   multipliers, reactions, residuals, complete body state, and solver controls.
+- Harden the coupled-result contract with originating-mechanism checks,
+  deterministic simulation identities, explicit identity scopes, and exported
+  per-interaction force histories; coupled payloads now use schema version 2.
+- Replace ambiguous broad spatial-dynamics discovery with structured,
+  solver-specific capability records.
 - Validate a gravity-driven spherical/physical pendulum, fixed composite body,
   equilibrium reaction signs, analytic torque-driven hinge motion, and the
   revolute Jacobian against finite differences.

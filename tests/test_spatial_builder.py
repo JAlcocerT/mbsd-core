@@ -644,6 +644,8 @@ def test_coupled_pair_interaction_is_equal_opposite_and_exports_complete_state(t
     assert payload["bodies"][0]["center_of_mass_position"]
     assert payload["model_id"] == mechanism.model_id()
     assert len(payload["excitation_id"]) == 16
+    assert len(payload["simulation_id"]) == 16
+    assert np.asarray(payload["interaction_force_world"]).shape == (11, 1, 3)
     assert payload["provenance"]["interaction_descriptors"][0]["name"] == "internal-pair"
 
     corrupt_force = copy.deepcopy(payload)
@@ -662,6 +664,93 @@ def test_coupled_pair_interaction_is_equal_opposite_and_exports_complete_state(t
     corrupt_provenance["provenance"]["interaction_descriptors"][0]["body_j"] = 99
     with pytest.raises(ValueError, match="interaction descriptor"):
         validate_coupled_result_payload(corrupt_provenance)
+    corrupt_interaction = copy.deepcopy(payload)
+    corrupt_interaction["interaction_force_world"][0][0][0] += 1.0
+    with pytest.raises(ValueError, match="excitation_id"):
+        validate_coupled_result_payload(corrupt_interaction)
+
+
+def test_coupled_result_is_bound_to_originating_mechanism():
+    first = Mechanism.spatial()
+    first.body("first", mass=1.0)
+    result = first.simulate_coupled_rigid_bodies(np.array([0.0, 0.1]))
+    second = Mechanism.spatial()
+    second.body("second", mass=9.0)
+
+    with pytest.raises(ValueError, match="model_id"):
+        second.coupled_diagnostics(result)
+    with pytest.raises(ValueError, match="model_id"):
+        second.coupled_result_to_dict(result)
+
+
+def test_coupled_simulation_identity_covers_initial_state_inertia_and_solver():
+    mechanism = Mechanism.spatial()
+    mechanism.body("body", inertia=(2.0, 3.0, 4.0))
+    times = np.array([0.0, 0.1])
+    base = mechanism.simulate_coupled_rigid_bodies(times)
+    moving = mechanism.simulate_coupled_rigid_bodies(
+        times, linear_velocity0=np.array([[1.0, 0.0, 0.0]])
+    )
+    full_inertia = np.array([[[2.0, 0.2, 0.1], [0.2, 3.0, 0.3], [0.1, 0.3, 4.0]]])
+    overridden = mechanism.simulate_coupled_rigid_bodies(
+        times, inertia_tensors_body=full_inertia
+    )
+    rk45 = mechanism.simulate_coupled_rigid_bodies(times, method="RK45")
+
+    assert base.model_id == moving.model_id == overridden.model_id
+    assert base.excitation_id == moving.excitation_id
+    assert len({base.simulation_id, moving.simulation_id, overridden.simulation_id, rk45.simulation_id}) == 4
+    np.testing.assert_allclose(overridden.inertia_tensor_body, full_inertia)
+
+
+def test_coupled_full_inertia_gyroscopic_term_and_method_convergence():
+    mechanism = Mechanism.spatial()
+    mechanism.body(
+        "rotated",
+        pose=Pose3D(rotation=Quaternion.from_axis_angle((1.0, 2.0, -1.0), 0.7)),
+    )
+    inertia = np.array([[[2.0, 0.2, 0.1], [0.2, 3.0, 0.3], [0.1, 0.3, 4.0]]])
+    omega = np.array([[0.7, -0.4, 1.1]])
+    times = np.linspace(0.0, 0.5, 31)
+    dop853 = mechanism.simulate_coupled_rigid_bodies(
+        times, angular_velocity0_body=omega, inertia_tensors_body=inertia,
+        method="DOP853", rtol=1e-11, atol=1e-13,
+    )
+    rk45 = mechanism.simulate_coupled_rigid_bodies(
+        times, angular_velocity0_body=omega, inertia_tensors_body=inertia,
+        method="RK45", rtol=1e-11, atol=1e-13,
+    )
+    expected_alpha = np.linalg.solve(
+        inertia[0], -np.cross(omega[0], inertia[0] @ omega[0])
+    )
+
+    np.testing.assert_allclose(dop853.angular_acceleration_body[0, 0], expected_alpha)
+    np.testing.assert_allclose(
+        dop853.angular_velocity_body, rk45.angular_velocity_body, atol=2e-10, rtol=2e-10
+    )
+
+
+def test_time_varying_offset_pair_exports_forces_and_expected_net_couple():
+    mechanism = Mechanism.spatial()
+    first = mechanism.body("first", pose=Pose3D((-1.0, 0.0, 0.0)))
+    second = mechanism.body("second", pose=Pose3D((1.0, 0.0, 0.0)))
+    interaction = mechanism.pair_interaction(
+        first, second,
+        lambda time, _poses, _velocities, _omegas: (0.0, 1.0 + time, 0.0),
+        point_i_from_com_body=(1.0, 0.0, 0.0),
+        point_j_from_com_body=(-1.0, 0.0, 0.0),
+        name="offset-runtime-pair",
+    )
+    times = np.linspace(0.0, 0.2, 11)
+    result = mechanism.simulate_coupled_rigid_bodies(times, interactions=(interaction,))
+
+    np.testing.assert_allclose(
+        result.interaction_force_world[:, 0, 1], 1.0 + times, atol=1e-12
+    )
+    total_force = np.sum(result.applied_force_world, axis=1)
+    np.testing.assert_allclose(total_force, 0.0, atol=1e-12)
+    # Equal-and-opposite non-central forces have zero net force but may carry a couple.
+    assert np.max(np.abs(np.sum(result.applied_torque_body[:, :, 2], axis=1))) > 1.8
 
 
 def test_coupled_dynamics_is_invariant_under_world_frame_transform():
