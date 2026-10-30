@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 CONSTRAINED_RESULT_SCHEMA = "mbsd.spatial.constrained_rigid_body_dynamic_result"
-CONSTRAINED_RESULT_SCHEMA_VERSION = 1
+CONSTRAINED_RESULT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -37,15 +37,18 @@ class ConstrainedRigidBodyDynamicsResult:
     angular_acceleration_body: np.ndarray
     applied_force_world: np.ndarray
     applied_torque_body: np.ndarray
+    interaction_force_world: np.ndarray
     reaction_force_world: np.ndarray
     reaction_torque_body: np.ndarray
     multipliers: np.ndarray
     position_residuals: np.ndarray
     velocity_residuals: np.ndarray
     acceleration_residuals: np.ndarray
+    constraint_jacobian: np.ndarray
     inertia_tensor_body: np.ndarray
     model_id: str
     excitation_id: str
+    simulation_id: str
     success: bool
     message: str
     provenance: Mapping[str, Any] = field(default_factory=dict)
@@ -55,9 +58,9 @@ class ConstrainedRigidBodyDynamicsResult:
         for name in (
             "t", "center_of_mass_position", "linear_velocity", "angular_velocity_body",
             "linear_acceleration", "angular_acceleration_body", "applied_force_world",
-            "applied_torque_body", "reaction_force_world", "reaction_torque_body",
+            "applied_torque_body", "interaction_force_world", "reaction_force_world", "reaction_torque_body",
             "multipliers", "position_residuals", "velocity_residuals",
-            "acceleration_residuals",
+            "acceleration_residuals", "constraint_jacobian",
             "inertia_tensor_body",
         ):
             array = np.asarray(getattr(self, name), dtype=float)
@@ -74,6 +77,7 @@ class ConstrainedDynamicsDiagnostics:
     max_velocity_residual: float
     max_acceleration_residual: float
     max_force_balance_residual: float
+    max_torque_balance_residual: float
     finite: bool
     success: bool
 
@@ -89,6 +93,7 @@ def constrained_capabilities() -> Mapping[str, Any]:
         "joint_types": ("spherical", "fixed", "revolute"),
         "reaction_forces": True, "reaction_moments": True,
         "position_projection": True, "velocity_projection": True,
+        "simulation_identity": True, "strict_result_validation": True,
         "contact": False,
         "angular_velocity_frame": "body", "inertia_frame": "body",
     })
@@ -172,14 +177,16 @@ def simulate_constrained_rigid_bodies(
             f, tau = load.evaluate(ti, pose_values[load.body], velocity[load.body], omega[load.body])
             force[load.body] += f
             torque[load.body] += tau
-        for interaction in interaction_values:
+        interaction_forces = np.zeros((len(interaction_values), 3))
+        for interaction_index, interaction in enumerate(interaction_values):
             value = interaction.evaluate(ti, pose_values, velocity, omega)
+            interaction_forces[interaction_index] = value
             i, j = interaction.body_i, interaction.body_j
             force[i] += value
             force[j] -= value
             torque[i] += np.cross(interaction.point_i_from_com_body, rotations[i].T @ value)
             torque[j] += np.cross(interaction.point_j_from_com_body, rotations[j].T @ (-value))
-        return force, torque
+        return force, torque, interaction_forces
 
     def acceleration(ti, state):
         com, quaternion, velocity, omega = unpack(state)
@@ -188,12 +195,12 @@ def simulate_constrained_rigid_bodies(
         u = np.concatenate((velocity, omega), axis=1).reshape(-1)
         jacobian = _generalized_jacobian(mechanism, pose_values, ti)
         ct = mechanism.constraint_time_derivative(pose_values, ti)
-        bias = _constraint_bias(mechanism, pose_values, ti, velocity, omega, jacobian, ct)
+        bias = _constraint_bias(mechanism, pose_values, ti, velocity, omega)
         position = mechanism.constraint_residual(pose_values, ti)
         velocity_residual = jacobian @ u + ct
         omega_stab = float(stabilization_frequency)
         gamma = -bias - 2.0 * omega_stab * velocity_residual - omega_stab**2 * position
-        force, torque = loads_at(ti, pose_values, velocity, omega)
+        force, torque, interaction_forces = loads_at(ti, pose_values, velocity, omega)
         generalized = np.concatenate((force, torque - np.cross(omega, np.einsum("bij,bj->bi", inertias, omega))), axis=1).reshape(-1)
         system = np.block([[mass_matrix, jacobian.T], [jacobian, np.zeros((rows, rows))]])
         try:
@@ -201,7 +208,7 @@ def simulate_constrained_rigid_bodies(
         except np.linalg.LinAlgError as error:
             raise MechanismSolveError("Constrained spatial acceleration solve is singular") from error
         reaction = -jacobian.T @ solved[6*count:]
-        return solved[:6*count], solved[6*count:], force, torque, reaction, position, velocity_residual, jacobian, bias
+        return solved[:6*count], solved[6*count:], force, torque, interaction_forces, reaction, position, velocity_residual, jacobian, bias
 
     def rhs(ti, state):
         _, quaternion, velocity, omega = unpack(state)
@@ -234,51 +241,94 @@ def simulate_constrained_rigid_bodies(
     shape = (len(times), count, 3)
     linear_acceleration = np.zeros(shape); angular_acceleration = np.zeros(shape)
     applied_force = np.zeros(shape); applied_torque = np.zeros(shape)
+    interaction_force = np.zeros((len(times), len(interaction_values), 3))
     reaction_force = np.zeros(shape); reaction_torque = np.zeros(shape)
     multipliers = np.zeros((len(times), rows)); position_residuals = np.zeros((rows, len(times)))
     velocity_residuals = np.zeros_like(position_residuals); acceleration_residuals = np.zeros_like(position_residuals)
+    jacobian_history = np.zeros((len(times), rows, 6 * count))
     pose_history: list[tuple[Pose3D, ...]] = []
     for time_index, ti in enumerate(times):
         state = states[time_index].reshape(-1)
         values = acceleration(float(ti), state)
-        generalized_acceleration, multipliers[time_index], applied_force[time_index], applied_torque[time_index], reaction, position, velocity_residual, jacobian, bias = values
+        generalized_acceleration, multipliers[time_index], applied_force[time_index], applied_torque[time_index], interaction_force[time_index], reaction, position, velocity_residual, jacobian, bias = values
         blocks = generalized_acceleration.reshape(count, 6)
         linear_acceleration[time_index] = blocks[:, :3]; angular_acceleration[time_index] = blocks[:, 3:]
         reaction_blocks = reaction.reshape(count, 6)
         reaction_force[time_index] = reaction_blocks[:, :3]; reaction_torque[time_index] = reaction_blocks[:, 3:]
         position_residuals[:, time_index] = position; velocity_residuals[:, time_index] = velocity_residual
         acceleration_residuals[:, time_index] = jacobian @ generalized_acceleration + bias
+        jacobian_history[time_index] = jacobian
         pose_history.append(state_poses(states[time_index, :, :3], states[time_index, :, 3:7]))
+    drive_samples = _drive_samples(mechanism, times)
+    excitation_payload = {
+        "time": times.tolist(), "gravity_world": gravity.tolist(),
+        "loads": [value.as_dict() for value in load_values],
+        "interactions": [value.as_dict() for value in interaction_values],
+        "drives": drive_samples,
+        "applied_force_samples": applied_force.tolist(),
+        "applied_torque_samples": applied_torque.tolist(),
+        "interaction_force_samples": interaction_force.tolist(),
+    }
+    excitation_id = _identity(excitation_payload)
+    simulation_payload = {
+        "model_id": mechanism.model_id(), "excitation_id": excitation_id,
+        "initial_center_of_mass_position": states[0, :, :3].tolist(),
+        "initial_orientation_wxyz": states[0, :, 3:7].tolist(),
+        "initial_linear_velocity_world": states[0, :, 7:10].tolist(),
+        "initial_angular_velocity_body": states[0, :, 10:13].tolist(),
+        "effective_inertia_tensor_body": inertias.tolist(),
+        "time": times.tolist(), "method": method, "rtol": float(rtol),
+        "atol": float(atol), "constraint_tolerance": float(constraint_tolerance),
+        "stabilization_frequency": float(stabilization_frequency),
+        "sample_projection": bool(project_samples),
+    }
     return ConstrainedRigidBodyDynamicsResult(
         t=times, poses=tuple(pose_history), center_of_mass_position=states[:, :, :3],
         linear_velocity=states[:, :, 7:10], angular_velocity_body=states[:, :, 10:13],
         linear_acceleration=linear_acceleration, angular_acceleration_body=angular_acceleration,
         applied_force_world=applied_force, applied_torque_body=applied_torque,
+        interaction_force_world=interaction_force,
         reaction_force_world=reaction_force, reaction_torque_body=reaction_torque,
         multipliers=multipliers, position_residuals=position_residuals,
         velocity_residuals=velocity_residuals, acceleration_residuals=acceleration_residuals,
+        constraint_jacobian=jacobian_history,
         inertia_tensor_body=inertias,
         model_id=mechanism.model_id(),
-        excitation_id=hashlib.sha256(json.dumps({"time": times.tolist(), "gravity": gravity.tolist(), "loads": [value.as_dict() for value in load_values], "interactions": [value.as_dict() for value in interaction_values], "applied_force": applied_force.tolist(), "applied_torque": applied_torque.tolist()}, sort_keys=True).encode()).hexdigest()[:16],
+        excitation_id=excitation_id, simulation_id=_identity(simulation_payload),
         success=True, message="converged",
-        provenance=MappingProxyType({"solver": "scipy.solve_ivp", "method": method, "rtol": float(rtol), "atol": float(atol), "constraint_tolerance": float(constraint_tolerance), "stabilization_frequency": float(stabilization_frequency), "sample_projection": bool(project_samples), "multiplier_equation": "M*a + J.T*lambda = applied_generalized_force", "physical_reaction": "-J.T*lambda", "jacobian": "analytic_position_transformed_to_com_body_velocity_basis", "jacobian_rate": "directional_finite_difference"}),
+        provenance=MappingProxyType({"solver": "scipy.solve_ivp", "method": method, "rtol": float(rtol), "atol": float(atol), "constraint_tolerance": float(constraint_tolerance), "stabilization_frequency": float(stabilization_frequency), "sample_projection": bool(project_samples), "initial_position_projection": True, "multiplier_equation": "M*a + J.T*lambda = applied_generalized_force", "physical_reaction": "-J.T*lambda", "jacobian": "analytic_position_transformed_to_com_body_velocity_basis", "jacobian_rate": "speed_scaled_central_richardson_directional_finite_difference", "gravity_world": tuple(gravity.tolist()), "load_descriptors": tuple(MappingProxyType(value.as_dict()) for value in load_values), "interaction_descriptors": tuple(MappingProxyType(value.as_dict()) for value in interaction_values), "drive_samples": tuple(MappingProxyType(value) for value in drive_samples)}),
         capabilities=constrained_capabilities(),
     )
 
 
 def constrained_diagnostics(mechanism: SpatialMechanism, result: ConstrainedRigidBodyDynamicsResult) -> ConstrainedDynamicsDiagnostics:
+    _validate_constrained_result(mechanism, result)
     pose0 = result.poses[0]
     jacobian = _generalized_jacobian(mechanism, pose0, float(result.t[0]))
     rank = int(np.linalg.matrix_rank(jacobian))
     masses = np.asarray([body.mass for body in mechanism._bodies])
     force_balance = masses[None, :, None] * result.linear_acceleration - result.applied_force_world - result.reaction_force_world
+    gyroscopic = np.cross(
+        result.angular_velocity_body,
+        np.einsum("bij,tbj->tbi", result.inertia_tensor_body, result.angular_velocity_body),
+    )
+    torque_balance = (
+        np.einsum("bij,tbj->tbi", result.inertia_tensor_body, result.angular_acceleration_body)
+        + gyroscopic - result.applied_torque_body - result.reaction_torque_body
+    )
     return ConstrainedDynamicsDiagnostics(
         steps=len(result.t), constraints=jacobian.shape[0], jacobian_rank=rank,
         degrees_of_freedom=6 * mechanism.nbody - rank,
         max_position_residual=_norm(result.position_residuals),
         max_velocity_residual=_norm(result.velocity_residuals),
         max_acceleration_residual=_norm(result.acceleration_residuals),
-        max_force_balance_residual=_norm(force_balance), finite=True, success=result.success,
+        max_force_balance_residual=_norm(force_balance),
+        max_torque_balance_residual=_norm(torque_balance),
+        finite=all(np.all(np.isfinite(value)) for value in (
+            result.t, result.center_of_mass_position, result.linear_velocity,
+            result.angular_velocity_body, result.linear_acceleration,
+            result.angular_acceleration_body,
+        )), success=result.success,
     )
 
 
@@ -290,18 +340,22 @@ def constrained_result_to_dict(mechanism: SpatialMechanism, result: ConstrainedR
         "mbsd_version": _package_version(), "status": "experimental",
         "solver_kind": "constrained_spatial_rigid_body_dynamics",
         "model_id": result.model_id, "excitation_id": result.excitation_id,
-        "units": {"length": "m", "angle": "rad", "time": "s", "linear_velocity": "m/s", "angular_velocity": "rad/s", "linear_acceleration": "m/s^2", "angular_acceleration": "rad/s^2", "force": "N", "torque": "N*m", "inertia": "kg*m^2"},
-        "conventions": {"world_frame": "right_handed_xyz", "orientation": "active_body_to_world_quaternion_wxyz", "linear_state": "center_of_mass_world", "angular_velocity_frame": "body", "reaction_force_frame": "world", "reaction_torque_frame": "body", "multiplier_equation": "M*a + J.T*lambda = applied_generalized_force", "physical_reaction": "-J.T*lambda"},
+        "simulation_id": result.simulation_id,
+        "identity_scope": _identity_scope(),
+        "units": _constrained_units(),
+        "conventions": _constrained_conventions(),
         "capabilities": _json_ready(result.capabilities),
         "solver_status": {"success": result.success, "message": result.message},
         "provenance": _json_ready(result.provenance), "diagnostics": diagnostics.as_dict(),
         "time": result.t.tolist(), "constraint_layout": layout,
         "multipliers": result.multipliers.tolist(),
+        "constraint_jacobian": result.constraint_jacobian.tolist(),
+        "interaction_force_world": result.interaction_force_world.tolist(),
         "position_residuals": result.position_residuals.tolist(),
         "velocity_residuals": result.velocity_residuals.tolist(),
         "acceleration_residuals": result.acceleration_residuals.tolist(),
         "bodies": [{
-            "index": index, "name": body.name, "mass": body.mass,
+            "index": index, "id": f"body:{body.name}", "name": body.name, "mass": body.mass,
             "center_of_mass_body": body.center_of_mass.tolist(),
             "inertia_tensor_body": result.inertia_tensor_body[index].tolist(),
             "poses": [step[index].as_dict() for step in result.poses],
@@ -325,7 +379,7 @@ def constrained_result_to_json(mechanism, result, path: str | Path, *, indent: i
     return path
 
 
-def validate_constrained_result_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_constrained_result_payload_v1_legacy(payload: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, Mapping) or payload.get("schema") != CONSTRAINED_RESULT_SCHEMA or payload.get("schema_version") != 1:
         raise ValueError("unsupported constrained rigid-body result schema")
     if payload.get("solver_kind") != "constrained_spatial_rigid_body_dynamics":
@@ -365,6 +419,21 @@ def validate_constrained_result_payload(payload: Mapping[str, Any]) -> dict[str,
         raise ValueError("constrained result must contain finite JSON values") from error
 
 
+def validate_constrained_result_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(payload, Mapping) and payload.get("schema_version") == 1:
+        return _validate_constrained_result_payload_v1_legacy(payload)
+    from .constrained_contract import validate_constrained_payload_v2
+
+    return validate_constrained_payload_v2(
+        payload,
+        schema=CONSTRAINED_RESULT_SCHEMA,
+        capabilities=_json_ready(constrained_capabilities()),
+        units=_constrained_units(),
+        conventions=_constrained_conventions(),
+        identity_scope=_identity_scope(),
+    )
+
+
 def load_constrained_result_payload(path: str | Path) -> dict[str, Any]:
     return validate_constrained_result_payload(json.loads(Path(path).read_text(encoding="utf-8")))
 
@@ -388,7 +457,7 @@ def _constraint_layout(mechanism, poses):
 
 
 def _layout_row(layout, kind, name, component, body_i, body_j, residual_units):
-    return {"row": len(layout), "kind": kind, "name": name, "component": component, "body_i": body_i, "body_j": body_j, "residual_units": residual_units, "multiplier_units": "N" if residual_units == "m" else "N*m"}
+    return {"row": len(layout), "id": f"constraint:{kind}:{name}:{component}", "kind": kind, "name": name, "component": component, "body_i": body_i, "body_j": body_j, "residual_units": residual_units, "multiplier_units": "N" if residual_units == "m" else "N*m"}
 
 
 def _generalized_jacobian(mechanism, poses, t):
@@ -402,22 +471,37 @@ def _generalized_jacobian(mechanism, poses, t):
     return pose_jacobian @ transform
 
 
-def _constraint_bias(mechanism, poses, t, velocity, omega, jacobian, ct):
-    step = 1e-6
-    advanced = []
-    for index, pose in enumerate(poses):
-        rotation = pose.rotation.to_rotation_matrix()
-        omega_world = rotation @ omega[index]
-        increment = Quaternion.from_axis_angle(omega_world, np.linalg.norm(omega_world) * step) if np.linalg.norm(omega_world) else Quaternion.identity()
-        com = pose.translation + rotation @ mechanism._bodies[index].center_of_mass
-        new_rotation = increment.compose(pose.rotation)
-        new_com = com + velocity[index] * step
-        advanced.append(Pose3D(new_com - new_rotation.rotate(mechanism._bodies[index].center_of_mass), new_rotation))
-    advanced = tuple(advanced)
-    jacobian_next = _generalized_jacobian(mechanism, advanced, t + step)
-    ct_next = mechanism.constraint_time_derivative(advanced, t + step)
+def _constraint_bias(mechanism, poses, t, velocity, omega):
+    rate = max(1.0, _norm(velocity), _norm(omega))
+    step = min(1e-4, max(1e-8, 1e-5 / rate))
+
+    def advanced_poses(signed_step):
+        advanced = []
+        for index, pose in enumerate(poses):
+            rotation = pose.rotation.to_rotation_matrix()
+            omega_world = rotation @ omega[index]
+            angle = np.linalg.norm(omega_world) * signed_step
+            increment = Quaternion.from_axis_angle(omega_world, angle) if np.linalg.norm(omega_world) else Quaternion.identity()
+            com = pose.translation + rotation @ mechanism._bodies[index].center_of_mass
+            new_rotation = increment.compose(pose.rotation)
+            new_com = com + velocity[index] * signed_step
+            advanced.append(Pose3D(new_com - new_rotation.rotate(mechanism._bodies[index].center_of_mass), new_rotation))
+        return tuple(advanced)
+
     u = np.concatenate((velocity, omega), axis=1).reshape(-1)
-    return ((jacobian_next - jacobian) / step) @ u + (ct_next - ct) / step
+    def central(value):
+        plus = _generalized_jacobian(
+            mechanism, advanced_poses(value), t + value
+        )
+        minus = _generalized_jacobian(
+            mechanism, advanced_poses(-value), t - value
+        )
+        return ((plus - minus) / (2.0 * value)) @ u
+
+    coarse = central(step)
+    fine = central(step / 2.0)
+    jdot_u = (4.0 * fine - coarse) / 3.0
+    return jdot_u + mechanism.constraint_second_time_derivative(poses, t)
 
 
 def _matrix3(value, count, name):
@@ -427,6 +511,74 @@ def _matrix3(value, count, name):
     if array.shape != (count, 3) or not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must have finite shape ({count}, 3)")
     return np.array(array, copy=True)
+
+
+def _validate_constrained_result(mechanism, result):
+    if not isinstance(result, ConstrainedRigidBodyDynamicsResult):
+        raise TypeError("result must be a ConstrainedRigidBodyDynamicsResult")
+    if result.model_id != mechanism.model_id():
+        raise ValueError("result model_id does not match this mechanism")
+    steps, bodies = len(result.t), mechanism.nbody
+    rows = result.multipliers.shape[1] if result.multipliers.ndim == 2 else -1
+    shapes = {
+        "center_of_mass_position": (steps, bodies, 3),
+        "linear_velocity": (steps, bodies, 3),
+        "angular_velocity_body": (steps, bodies, 3),
+        "linear_acceleration": (steps, bodies, 3),
+        "angular_acceleration_body": (steps, bodies, 3),
+        "applied_force_world": (steps, bodies, 3),
+        "applied_torque_body": (steps, bodies, 3),
+        "reaction_force_world": (steps, bodies, 3),
+        "reaction_torque_body": (steps, bodies, 3),
+        "multipliers": (steps, rows),
+        "position_residuals": (rows, steps),
+        "velocity_residuals": (rows, steps),
+        "acceleration_residuals": (rows, steps),
+        "constraint_jacobian": (steps, rows, 6 * bodies),
+        "inertia_tensor_body": (bodies, 3, 3),
+    }
+    if result.interaction_force_world.ndim != 3:
+        raise ValueError("constrained result interaction history is invalid")
+    shapes["interaction_force_world"] = (steps, result.interaction_force_world.shape[1], 3)
+    if np.asarray(result.t).shape != (steps,) or steps < 2 or not np.all(np.isfinite(result.t)) or np.any(np.diff(result.t) <= 0):
+        raise ValueError("constrained result time history is invalid")
+    for name, shape in shapes.items():
+        values = np.asarray(getattr(result, name))
+        if values.shape != shape or not np.all(np.isfinite(values)):
+            raise ValueError(f"constrained result {name} is invalid")
+    if len(result.poses) != steps or any(len(step) != bodies for step in result.poses):
+        raise ValueError("constrained result pose history is invalid")
+    if any(not isinstance(pose, Pose3D) for step in result.poses for pose in step):
+        raise ValueError("constrained result pose history is invalid")
+
+
+def _drive_samples(mechanism, times):
+    return [{
+        "name": drive.name, "body": drive.body, "coordinate": drive.coordinate,
+        "value": [float(drive.value(float(time))) for time in times],
+        "velocity": [float(drive.velocity(float(time))) for time in times],
+        "acceleration": [float(drive.acceleration_value(float(time))) for time in times],
+    } for drive in mechanism._drives]
+
+
+def _identity(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _constrained_units():
+    return {"length": "m", "angle": "rad", "time": "s", "linear_velocity": "m/s", "angular_velocity": "rad/s", "linear_acceleration": "m/s^2", "angular_acceleration": "rad/s^2", "force": "N", "torque": "N*m", "inertia": "kg*m^2"}
+
+
+def _constrained_conventions():
+    return {"world_frame": "right_handed_xyz", "orientation": "active_body_to_world_quaternion_wxyz", "linear_state": "center_of_mass_world", "angular_velocity_frame": "body", "reaction_force_frame": "world", "reaction_torque_frame": "body", "multiplier_equation": "M*a + J.T*lambda = applied_generalized_force", "physical_reaction": "-J.T*lambda"}
+
+
+def _identity_scope():
+    return {
+        "model_id": "mechanism topology, body properties, authored poses, and constraint descriptors",
+        "excitation_id": "time grid, gravity, sampled drives, loads, interactions, and sampled applied loads",
+        "simulation_id": "model and excitation identities, projected initial state, effective inertia, time grid, and solver controls",
+    }
 
 
 def _skew(value):

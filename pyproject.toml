@@ -1,6 +1,6 @@
 [project]
 name = "mbsd"
-version = "0.9.4"
+version = "0.9.5"
 description = "Readable Python tools for planar multibody mechanism kinematics and dynamics."
 readme = "readme.md"
 requires-python = ">=3.10"
@@ -51,6 +51,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mbsd"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "mbsd/schemas"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

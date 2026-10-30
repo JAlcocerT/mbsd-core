@@ -14,8 +14,8 @@ import numpy as np
 
 ArrayLike3 = Iterable[float]
 SPATIAL_MODEL_SCHEMA = "mbsd.spatial.model"
-SPATIAL_MODEL_SCHEMA_VERSION = 2
-SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS = (1, 2)
+SPATIAL_MODEL_SCHEMA_VERSION = 3
+SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS = (1, 2, 3)
 
 
 @dataclass(frozen=True)
@@ -177,6 +177,7 @@ class SpatialBody:
 
     def as_dict(self, index: int | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {
+            "id": f"body:{self.name}",
             "name": self.name,
             "mass": self.mass,
             "inertia": _vector(self.inertia),
@@ -205,6 +206,7 @@ class Frame3D:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "id": f"frame:{self.name}",
             "name": self.name,
             "pose": self.pose.as_dict(),
             "parent_body": self.parent_body,
@@ -229,6 +231,7 @@ class SphericalJoint3D:
     def as_dict(self, index: int | None = None) -> dict[str, Any]:
         payload = {
             "kind": "spherical",
+            "id": f"joint:{self.name}",
             "name": self.name,
             "body_i": self.body_i,
             "body_j": self.body_j,
@@ -264,6 +267,7 @@ class FixedJoint3D:
     def as_dict(self, index: int | None = None) -> dict[str, Any]:
         payload = {
             "kind": "fixed",
+            "id": f"joint:{self.name}",
             "name": self.name,
             "body_i": self.body_i,
             "body_j": self.body_j,
@@ -298,7 +302,7 @@ class RevoluteJoint3D:
 
     def as_dict(self, index: int | None = None) -> dict[str, Any]:
         payload = {
-            "kind": "revolute", "name": self.name,
+            "kind": "revolute", "id": f"joint:{self.name}", "name": self.name,
             "body_i": self.body_i, "body_j": self.body_j,
             "frame_i": self.frame_i.as_dict(), "frame_j": self.frame_j.as_dict(),
             "free_axis": "local_z",
@@ -424,6 +428,7 @@ class SpatialModel:
                 "body_pose": "body_to_world",
                 "frame_pose": "parent_body_local; world_when_parent_body_is_null",
                 "fixed_joint_frames": "body_local; world_when_body_is_null",
+                "revolute_joint_frames": "body_local; world_when body is null; local_z is free",
                 "inertia": "principal_moments_about_com_in_body_frame",
                 "joint_points": "body_local_xyz; world_xyz_when_body_is_null",
             },
@@ -451,8 +456,8 @@ class SpatialModel:
 def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Validate an export and return a detached copy.
 
-    Legacy schema v1 receives header validation only. Schema v2 receives full
-    structural and semantic validation through the public vocabulary types.
+    Legacy schema v1 receives header validation only. Schemas v2 and v3 receive
+    full structural and semantic validation through the public vocabulary types.
     """
     if not isinstance(payload, Mapping):
         raise TypeError("spatial model payload must be a mapping")
@@ -485,17 +490,17 @@ def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]
         raise ValueError(
             f"schema_version {schema_version} conventions missing: {', '.join(missing)}"
         )
-    if schema_version == 2 and not isinstance(payload.get("capabilities"), Mapping):
-        raise ValueError("schema_version 2 capabilities must be a mapping")
-    if schema_version == 2:
-        _validate_spatial_model_v2(payload)
+    if schema_version in (2, 3) and not isinstance(payload.get("capabilities"), Mapping):
+        raise ValueError(f"schema_version {schema_version} capabilities must be a mapping")
+    if schema_version in (2, 3):
+        _validate_spatial_model_v2(payload, schema_version)
     try:
         return json.loads(json.dumps(payload, allow_nan=False))
     except (TypeError, ValueError) as error:
         raise ValueError("spatial model payload must contain finite JSON values") from error
 
 
-def _validate_spatial_model_v2(payload: Mapping[str, Any]) -> None:
+def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) -> None:
     if not isinstance(payload.get("mbsd_version"), str) or not payload["mbsd_version"]:
         raise ValueError("mbsd_version must be a non-empty string")
     if payload.get("status") != "experimental" or payload.get("dimension") != 3:
@@ -509,6 +514,9 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any]) -> None:
     if payload.get("units") != expected_units:
         raise ValueError(f"units must be {expected_units!r}")
     expected_conventions = SpatialModel().as_dict()["conventions"]
+    if schema_version == 2:
+        expected_conventions = dict(expected_conventions)
+        expected_conventions.pop("revolute_joint_frames", None)
     if payload.get("conventions") != expected_conventions:
         raise ValueError("conventions must match the schema v2 spatial conventions")
     capabilities = payload.get("capabilities")
@@ -521,6 +529,8 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any]) -> None:
         "general_spatial_solver": False,
         "spatial_dynamics": False,
     }
+    if schema_version == 3:
+        expected_flags["revolute_joint_residual"] = True
     if not isinstance(capabilities, Mapping) or any(
         capabilities.get(name) is not expected for name, expected in expected_flags.items()
     ):
@@ -529,6 +539,7 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any]) -> None:
     if not isinstance(jacobian_capabilities, Mapping) or (
         jacobian_capabilities.get("spherical") != "analytic"
         or jacobian_capabilities.get("fixed") not in {"finite_difference", "analytic"}
+        or (schema_version == 3 and jacobian_capabilities.get("revolute") != "analytic")
     ):
         raise ValueError("joint_residual_jacobian capabilities are invalid")
     metadata = payload.get("metadata")
@@ -555,14 +566,28 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any]) -> None:
             for item in payload["frames"]
             if _require_mapping(item, "frame")
         )
+        if schema_version == 2 and any(
+            isinstance(item, Mapping) and item.get("kind") == "revolute"
+            for item in payload["joints"]
+        ):
+            raise ValueError("revolute joints require spatial model schema_version 3")
         joints = tuple(
             _joint_from_payload(item, index)
             for index, item in enumerate(payload["joints"])
         )
+        if schema_version == 3:
+            for kind, values in (
+                ("body", payload["bodies"]),
+                ("frame", payload["frames"]),
+                ("joint", payload["joints"]),
+            ):
+                expected_ids = [f"{kind}:{item['name']}" for item in values]
+                if [item.get("id") for item in values] != expected_ids:
+                    raise ValueError(f"schema v3 {kind} ids are invalid")
         SpatialModel(bodies=bodies, frames=frames, joints=joints, metadata=metadata)
         _json_ready(dict(metadata))
     except (TypeError, ValueError, IndexError, KeyError) as error:
-        raise ValueError(f"invalid schema v2 spatial model: {error}") from error
+        raise ValueError(f"invalid schema v{schema_version} spatial model: {error}") from error
 
 
 def _require_mapping(value: Any, name: str) -> bool:

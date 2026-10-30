@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multibodysystemsdynamics.com/schemas/mbsd.spatial.model-v3.schema.json",
+  "title": "MBSD Spatial Model v3",
+  "type": "object",
+  "required": ["schema", "schema_version", "mbsd_version", "status", "capabilities", "dimension", "units", "conventions", "metadata", "bodies", "frames", "joints"],
+  "properties": {
+    "schema": {"const": "mbsd.spatial.model"},
+    "schema_version": {"const": 3},
+    "mbsd_version": {"type": "string", "minLength": 1},
+    "status": {"const": "experimental"},
+    "dimension": {"const": 3},
+    "capabilities": {"type": "object"},
+    "units": {"type": "object"},
+    "conventions": {"type": "object"},
+    "metadata": {"type": "object"},
+    "bodies": {"type": "array", "items": {"$ref": "#/$defs/body"}},
+    "frames": {"type": "array", "items": {"$ref": "#/$defs/frame"}},
+    "joints": {"type": "array", "items": {"oneOf": [{"$ref": "#/$defs/spherical"}, {"$ref": "#/$defs/fixed"}, {"$ref": "#/$defs/revolute"}]}}
+  },
+  "$defs": {
+    "vector3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "rotation": {"type": "object", "required": ["w", "x", "y", "z"], "properties": {"w": {"type": "number"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}},
+    "pose": {"type": "object", "required": ["translation", "rotation"], "properties": {"translation": {"$ref": "#/$defs/vector3"}, "rotation": {"$ref": "#/$defs/rotation"}}},
+    "body": {"type": "object", "required": ["id", "index", "name", "mass", "inertia", "center_of_mass", "pose"], "properties": {"id": {"type": "string"}, "index": {"type": "integer"}, "name": {"type": "string"}, "mass": {"type": "number", "exclusiveMinimum": 0}, "inertia": {"$ref": "#/$defs/vector3"}, "center_of_mass": {"$ref": "#/$defs/vector3"}, "pose": {"$ref": "#/$defs/pose"}}},
+    "frame": {"type": "object", "required": ["id", "name", "pose", "parent_body"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "pose": {"$ref": "#/$defs/pose"}, "parent_body": {"type": ["integer", "null"]}}},
+    "jointBase": {"type": "object", "required": ["id", "index", "kind", "name", "body_i", "body_j"]},
+    "spherical": {"allOf": [{"$ref": "#/$defs/jointBase"}, {"properties": {"kind": {"const": "spherical"}, "point_i": {"$ref": "#/$defs/vector3"}, "point_j": {"$ref": "#/$defs/vector3"}}, "required": ["point_i", "point_j"]}]},
+    "fixed": {"allOf": [{"$ref": "#/$defs/jointBase"}, {"properties": {"kind": {"const": "fixed"}, "frame_i": {"$ref": "#/$defs/pose"}, "frame_j": {"$ref": "#/$defs/pose"}}, "required": ["frame_i", "frame_j"]}]},
+    "revolute": {"allOf": [{"$ref": "#/$defs/jointBase"}, {"properties": {"kind": {"const": "revolute"}, "frame_i": {"$ref": "#/$defs/pose"}, "frame_j": {"$ref": "#/$defs/pose"}, "free_axis": {"const": "local_z"}}, "required": ["frame_i", "frame_j", "free_axis"]}]}
+  }
+}

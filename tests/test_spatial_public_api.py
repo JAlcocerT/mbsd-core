@@ -6,6 +6,7 @@ import pytest
 
 import mbsd
 from mbsd.spatial import (
+    build_transform_handoff,
     compose_pose,
     fixed_joint_descriptor_residual,
     FixedJoint3D,
@@ -17,6 +18,7 @@ from mbsd.spatial import (
     point_position,
     point_velocity,
     Quaternion,
+    RevoluteJoint3D,
     quaternion_rate_world,
     resolve_frame_pose,
     spherical_joint_descriptor_residual,
@@ -27,6 +29,7 @@ from mbsd.spatial import (
     SphericalJoint3D,
     load_spatial_model_payload,
     validate_spatial_model_payload,
+    validate_transform_handoff,
 )
 
 
@@ -140,7 +143,7 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
         "joints",
     } <= payload.keys()
     assert payload["schema"] == "mbsd.spatial.model"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["mbsd_version"] == mbsd.__version__
     assert payload["status"] == "experimental"
     assert payload["capabilities"]["joint_residual_jacobian"] == {
@@ -522,12 +525,16 @@ def test_fixed_joint_log_residual_rejects_ambiguous_pi_branch():
 
 def test_spatial_residual_summary_keeps_translation_and_rotation_units_separate():
     summary = spatial_residual_summary(
-        [np.array([0.1, -0.2, 0.05]), np.array([0.3, 0.1, 0.2, 0.01, -0.04, 0.02])]
+        [
+            np.array([0.1, -0.2, 0.05]),
+            np.array([0.3, 0.1, 0.2, 0.01, -0.04, 0.02]),
+            np.array([0.0, 0.0, 0.0, 0.06, -0.05]),
+        ]
     )
 
     assert summary.max_translation_residual == pytest.approx(0.3)
-    assert summary.max_rotation_residual == pytest.approx(0.04)
-    assert summary.as_dict()["max_rotation_residual_rad"] == pytest.approx(0.04)
+    assert summary.max_rotation_residual == pytest.approx(0.06)
+    assert summary.as_dict()["max_rotation_residual_rad"] == pytest.approx(0.06)
     assert max_spatial_residual([np.arange(6.0)]) == 5.0
 
 
@@ -540,3 +547,67 @@ def test_spatial_kinematics_reject_invalid_inputs():
         max_spatial_residual([np.array([0.0, np.nan, 0.0])])
     with pytest.raises(IndexError, match="out of range"):
         SphericalJoint3D("orphan", 0, 1).residual([Pose3D.identity()])
+
+
+def test_transform_handoff_is_engine_neutral_scaled_and_self_validating():
+    mechanism = mbsd.Mechanism.spatial()
+    mechanism.ground()
+    result = mechanism.simulate_constrained_rigid_bodies(np.array([0.0, 0.1]))
+    payload = mechanism.constrained_result_to_dict(result)
+
+    freecad = build_transform_handoff(
+        payload,
+        target="freecad",
+        geometry_references={
+            "body:ground": {"uri": "assembly.step", "object": "Ground"}
+        },
+    )
+    blender = build_transform_handoff(payload, target="blender")
+
+    kinematics = mbsd.Mechanism.spatial()
+    kinematics.ground()
+    kinematics.body("moving", pose=Pose3D((1.0, 0.0, 0.0)))
+    kinematic_payload = kinematics.result_to_dict(
+        kinematics.solve_kinematics(np.array([0.0, 0.1]))
+    )
+    browser = build_transform_handoff(
+        kinematic_payload,
+        target="browser",
+        axis_matrix=np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+    )
+
+    assert freecad["target"]["length_unit"] == "mm"
+    assert freecad["target"]["length_scale_from_m"] == 1000.0
+    assert blender["target"]["length_unit"] == "m"
+    assert freecad["tracks"][0]["id"] == "body:ground"
+    assert freecad["tracks"][0]["geometry_reference"]["uri"] == "assembly.step"
+    assert browser["source"]["schema"] == "mbsd.spatial.kinematic_result"
+    np.testing.assert_allclose(
+        browser["tracks"][1]["samples"][0]["translation"], [0.0, 1.0, 0.0]
+    )
+    assert validate_transform_handoff(freecad) == freecad
+
+    unsupported = json.loads(json.dumps(freecad))
+    unsupported["capabilities"]["geometry_loading"] = True
+    with pytest.raises(ValueError, match="capabilities"):
+        validate_transform_handoff(unsupported)
+
+    corrupt = json.loads(json.dumps(freecad))
+    corrupt["tracks"][0]["samples"][0]["translation"][0] = 1.0
+    with pytest.raises(ValueError, match="artifact_id"):
+        validate_transform_handoff(corrupt)
+
+
+def test_spatial_model_schema_v3_owns_revolute_joint_kind():
+    model = SpatialModel().with_body(SpatialBody("body"))
+    payload = model.with_joint(RevoluteJoint3D("hinge", None, 0)).as_dict()
+    assert payload["schema_version"] == 3
+    assert payload["bodies"][0]["id"] == "body:body"
+    assert payload["joints"][0]["id"] == "joint:hinge"
+    assert validate_spatial_model_payload(payload)["joints"][0]["kind"] == "revolute"
+
+    old_version = json.loads(json.dumps(payload))
+    old_version["schema_version"] = 2
+    old_version["conventions"].pop("revolute_joint_frames")
+    with pytest.raises(ValueError, match="schema_version 3"):
+        validate_spatial_model_payload(old_version)

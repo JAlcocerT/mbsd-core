@@ -23,7 +23,7 @@ handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.9.4
+git checkout v0.9.5
 uv sync --extra dev
 ```
 
@@ -99,19 +99,21 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
   centers of mass, pair interactions, and complete state export in `0.9.3`.
 - Constrained spatial dynamics with spherical, fixed, and revolute joints,
   physical reaction loads, projection, and stabilization controls in `0.9.4`.
+- Strict constrained-result identity and validation plus engine-neutral
+  FreeCAD/Blender/browser transform handoffs in `0.9.5`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
-Forward dynamics currently requires each body reference point to coincide with
-its center of mass. Offset-COM kinematics are accepted, but offset-COM dynamics
-raise a clear error until the corresponding inertial terms are implemented.
+The restricted planar and fixed-orientation preview paths retain their stated
+center-of-mass limitations. The unconstrained coupled and constrained six-DOF
+spatial solvers support offset centers of mass and export the distinction
+between center-of-mass state and body reference-origin pose.
 
 ## Experimental Spatial Vocabulary
 
-MBSD `0.5.0` defines data structures for 3D poses, bodies, frames, and fixed or
-spherical joint sketches under `mbsd.spatial`. It can write a versioned JSON
-model for visualization and geometry handoffs. This is a model vocabulary only:
-it does not solve 3D constraints, kinematics, or dynamics, and the API may
-change before `1.0`.
+MBSD `0.5.0` introduced data structures for 3D poses, bodies, frames, and fixed
+or spherical joint sketches under `mbsd.spatial`. That original surface was a
+model vocabulary only; the later solver milestones described below add
+kinematics and dynamics while remaining experimental until `1.0`.
 
 Spatial data uses a right-handed XYZ world frame, metres, kilograms, seconds,
 and radians. Quaternions are `[w, x, y, z]` active rotations from body to world.
@@ -276,6 +278,27 @@ print(m.constrained_diagnostics(result).as_dict())
 ```
 
 Contact, collision, friction, and flexible-body dynamics remain unsupported.
+
+## Engine-Neutral Interoperability
+
+MBSD `0.9.5` publishes spatial-model schema v3, constrained-result schema v2,
+and transform-track handoff schema v1. `build_transform_handoff()` validates a
+spatial result before converting poses into an explicit target unit, axis map,
+quaternion order, time base, optional geometry references, and content-derived
+artifact identity. Both spatial kinematic and rigid-body dynamic result
+contracts can supply tracks.
+
+```python
+from mbsd.spatial import build_transform_handoff, transform_handoff_to_json
+
+payload = m.constrained_result_to_dict(result)
+freecad_tracks = build_transform_handoff(payload, target="freecad")
+transform_handoff_to_json(freecad_tracks, "freecad-tracks.json")
+```
+
+The core does not import FreeCAD, Blender, browser, or PWA runtimes. Reference
+consumers live in the companion examples repository and use only this neutral
+contract.
 
 Planar dynamics uses the saddle-multiplier convention
 `M @ a + Cq.T @ lambda = Q`; exported generalized constraint reactions are the

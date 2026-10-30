@@ -14,6 +14,7 @@ from mbsd.spatial import (
     load_rigid_body_result_payload,
     load_coupled_result_payload,
     load_constrained_result_payload,
+    validate_constrained_result_payload,
     validate_coupled_result_payload,
     load_spatial_kinematic_result_payload,
     validate_spatial_kinematic_result_payload,
@@ -886,7 +887,17 @@ def test_revolute_joint_analytic_jacobian_matches_finite_difference():
     mechanism = Mechanism.spatial()
     first = mechanism.body("first", pose=Pose3D(rotation=Quaternion.from_axis_angle((1, 0, 0), 0.2)))
     second = mechanism.body("second", pose=Pose3D(rotation=Quaternion.from_axis_angle((0, 1, 0), -0.15)))
-    joint = mechanism.revolute(first, second, name="hinge")
+    joint = mechanism.revolute(
+        first,
+        second,
+        frame_i=Pose3D(
+            (0.2, -0.1, 0.3), Quaternion.from_axis_angle((1, 1, 0), 0.4)
+        ),
+        frame_j=Pose3D(
+            (-0.2, 0.3, 0.1), Quaternion.from_axis_angle((0, 1, 1), -0.3)
+        ),
+        name="hinge",
+    )
     poses = mechanism._initial_poses()
     analytic = mechanism.constraint_jacobian(poses)
     numeric = np.zeros_like(analytic)
@@ -925,6 +936,103 @@ def test_constrained_dynamics_rejects_incompatible_initial_velocity():
             linear_velocity0=np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
             angular_velocity0_body=np.zeros((2, 3)),
         )
+
+
+def test_revolute_joint_crosses_pi_and_completes_multiple_turns():
+    mechanism = Mechanism.spatial()
+    ground = mechanism.ground()
+    rotor = mechanism.body("rotor", inertia=(2.0, 3.0, 4.0))
+    mechanism.revolute(ground, rotor, name="hinge")
+    motor = mechanism.rigid_body_load(rotor, torque=(0.0, 0.0, 4.0))
+    critical = np.sqrt(2.0 * np.pi)
+    times = np.unique(np.concatenate((np.linspace(0.0, 6.0, 121), [critical])))
+
+    result = mechanism.simulate_constrained_rigid_bodies(
+        times, loads=(motor,), rtol=1e-10, atol=1e-12
+    )
+
+    np.testing.assert_allclose(result.angular_velocity_body[:, 1, 2], times, atol=3e-8)
+    assert mechanism.constrained_diagnostics(result).max_position_residual < 1e-9
+
+
+def test_constrained_result_binding_identity_and_strict_payload(tmp_path):
+    first = Mechanism.spatial()
+    ground = first.ground()
+    body = first.body("body")
+    first.fixed(ground, body, name="weld")
+    load = first.rigid_body_load(body, torque=(1.0, 0.0, 0.0))
+    result = first.simulate_constrained_rigid_bodies(np.array([0.0, 0.1]), loads=(load,))
+    payload = load_constrained_result_payload(
+        first.constrained_result_to_json(result, tmp_path / "constrained.json")
+    )
+    assert len(payload["simulation_id"]) == 16
+    assert payload["diagnostics"]["max_torque_balance_residual"] < 1e-12
+
+    legacy = copy.deepcopy(payload)
+    legacy["schema_version"] = 1
+    for field in (
+        "simulation_id",
+        "identity_scope",
+        "constraint_jacobian",
+        "interaction_force_world",
+    ):
+        legacy.pop(field)
+    legacy["diagnostics"].pop("max_torque_balance_residual")
+    for descriptor in legacy["constraint_layout"]:
+        descriptor.pop("id")
+    for exported_body in legacy["bodies"]:
+        exported_body.pop("id")
+    assert validate_constrained_result_payload(legacy)["schema_version"] == 1
+
+    second = Mechanism.spatial()
+    second_ground = second.ground("other-ground")
+    second_body = second.body("other-body")
+    second.fixed(second_ground, second_body, name="other-weld")
+    with pytest.raises(ValueError, match="model_id"):
+        second.constrained_diagnostics(result)
+    with pytest.raises(ValueError, match="model_id"):
+        second.constrained_result_to_dict(result)
+
+    for field in ("units", "conventions", "capabilities", "identity_scope"):
+        corrupt = copy.deepcopy(payload)
+        corrupt.pop(field)
+        with pytest.raises(ValueError):
+            validate_constrained_result_payload(corrupt)
+    corrupt = copy.deepcopy(payload)
+    corrupt["bodies"][1]["reaction_torque_body"][0][0] += 1.0
+    with pytest.raises(ValueError, match="torque balance"):
+        validate_constrained_result_payload(corrupt)
+    corrupt = copy.deepcopy(payload)
+    corrupt["bodies"][0]["mass"] = -1.0
+    with pytest.raises(ValueError, match="mass"):
+        validate_constrained_result_payload(corrupt)
+
+
+def test_constrained_simulation_identity_covers_drives_inertia_and_controls():
+    def driven(scale):
+        mechanism = Mechanism.spatial()
+        mechanism.ground()
+        body = mechanism.body("body")
+        mechanism.coordinate_drive(
+            body, "x", value=lambda time: scale * time,
+            velocity=lambda _time: scale, acceleration=lambda _time: 0.0,
+            name="motion",
+        )
+        return mechanism.simulate_constrained_rigid_bodies(np.array([0.0, 0.1]))
+
+    first = driven(1.0)
+    second = driven(2.0)
+    assert first.model_id == second.model_id
+    assert first.excitation_id != second.excitation_id
+    assert first.simulation_id != second.simulation_id
+
+    mechanism = Mechanism.spatial()
+    mechanism.ground()
+    base = mechanism.simulate_constrained_rigid_bodies(np.array([0.0, 0.1]))
+    stabilized = mechanism.simulate_constrained_rigid_bodies(
+        np.array([0.0, 0.1]), stabilization_frequency=5.0
+    )
+    assert base.simulation_id != stabilized.simulation_id
 
 
 def test_fixed_orientation_dynamics_rejects_torque_like_force_contracts():

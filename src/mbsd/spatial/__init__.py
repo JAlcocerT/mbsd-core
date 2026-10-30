@@ -71,6 +71,13 @@ from .constrained import (
     load_constrained_result_payload,
     validate_constrained_result_payload,
 )
+from .interop import (
+    HANDOFF_SCHEMA,
+    HANDOFF_SCHEMA_VERSION,
+    build_transform_handoff,
+    transform_handoff_to_json,
+    validate_transform_handoff,
+)
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
@@ -102,6 +109,11 @@ __all__ = [
     "ConstrainedRigidBodyDynamicsResult",
     "load_constrained_result_payload",
     "validate_constrained_result_payload",
+    "HANDOFF_SCHEMA",
+    "HANDOFF_SCHEMA_VERSION",
+    "build_transform_handoff",
+    "transform_handoff_to_json",
+    "validate_transform_handoff",
     "free_body_capabilities",
     "load_rigid_body_result_payload",
     "load_coupled_result_payload",

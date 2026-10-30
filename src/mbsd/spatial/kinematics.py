@@ -121,11 +121,14 @@ def revolute_joint_descriptor_residual(
     """Return three frame-position and two hinge-axis rotation residuals."""
     if not isinstance(joint, RevoluteJoint3D):
         raise TypeError("joint must be a RevoluteJoint3D")
-    fixed = FixedJoint3D(
-        joint.name, joint.body_i, joint.body_j, joint.frame_i, joint.frame_j
+    frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)
+    frame_j = _joint_frame_pose(joint.body_j, joint.frame_j, poses)
+    relative = frame_j.rotation.inverse().compose(frame_i.rotation).as_array()
+    # A revolute orientation is exactly q_rel=[w, 0, 0, z]. The transverse
+    # quaternion components remain regular as the free angle crosses pi.
+    return np.concatenate(
+        (frame_i.translation - frame_j.translation, 2.0 * relative[1:3])
     )
-    residual = fixed_joint_descriptor_residual(fixed, poses)
-    return np.concatenate((residual[:3], residual[3:5]))
 
 
 def joint_residual_jacobian(
@@ -154,11 +157,7 @@ def joint_residual_jacobian(
         return _spherical_joint_residual_jacobian(joint, poses)
     if isinstance(joint, FixedJoint3D):
         return _fixed_joint_residual_jacobian(joint, poses)
-    fixed = FixedJoint3D(
-        joint.name, joint.body_i, joint.body_j, joint.frame_i, joint.frame_j
-    )
-    full = _fixed_joint_residual_jacobian(fixed, poses)
-    return np.vstack((full[:3], full[3:5]))
+    return _revolute_joint_residual_jacobian(joint, poses)
 
 
 def _spherical_joint_residual_jacobian(
@@ -213,6 +212,32 @@ def _fixed_joint_residual_jacobian(
     return result
 
 
+def _revolute_joint_residual_jacobian(
+    joint: RevoluteJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+) -> np.ndarray:
+    frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)
+    frame_j = _joint_frame_pose(joint.body_j, joint.frame_j, poses)
+    relative = frame_j.rotation.inverse().compose(frame_i.rotation).as_array()
+    rotation_block = (
+        relative[0] * np.eye(3) - _skew(relative[1:])
+    ) @ frame_j.rotation.to_rotation_matrix().T
+    result = np.zeros((5, 6 * len(poses)))
+    for sign, body, frame in (
+        (1.0, joint.body_i, joint.frame_i),
+        (-1.0, joint.body_j, joint.frame_j),
+    ):
+        if body is None:
+            continue
+        pose = _body_pose(body, poses)
+        offset_world = pose.rotation.rotate(frame.translation)
+        start = 6 * body
+        result[:3, start : start + 3] += sign * np.eye(3)
+        result[:3, start + 3 : start + 6] += -sign * _skew(offset_world)
+        result[3:, start + 3 : start + 6] += sign * rotation_block[:2]
+    return result
+
+
 def _rotation_vector(rotation: Quaternion) -> np.ndarray:
     values = rotation.normalized().as_array()
     if values[0] < 0.0:
@@ -260,15 +285,15 @@ class SpatialResidualSummary:
 def spatial_residual_summary(
     residuals: list[np.ndarray] | tuple[np.ndarray, ...],
 ) -> SpatialResidualSummary:
-    """Summarize spherical (3) and fixed-joint (6) residual vectors by unit."""
+    """Summarize spherical (3), revolute (5), and fixed (6) residuals by unit."""
     translation: list[float] = []
     rotation: list[float] = []
     for residual in residuals:
         vector = _as_residual_vector(residual)
-        if vector.size not in (3, 6):
-            raise ValueError("spatial residuals must have shape (3,) or (6,)")
+        if vector.size not in (3, 5, 6):
+            raise ValueError("spatial residuals must have shape (3,), (5,), or (6,)")
         translation.append(float(np.linalg.norm(vector[:3], ord=np.inf)))
-        if vector.size == 6:
+        if vector.size in (5, 6):
             rotation.append(float(np.linalg.norm(vector[3:], ord=np.inf)))
     return SpatialResidualSummary(
         max(translation, default=0.0), max(rotation, default=0.0), True

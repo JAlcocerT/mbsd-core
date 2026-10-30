@@ -1,8 +1,8 @@
 {
-  "release": "0.9.4",
-  "core_ref": "v0.9.4",
-  "examples_ref": "v0.9.4",
-  "examples_core_range": ">=0.9.4,<0.10",
+  "release": "0.9.5",
+  "core_ref": "v0.9.5",
+  "examples_ref": "v0.9.5",
+  "examples_core_range": ">=0.9.5,<0.10",
   "schemas": {
     "mbsd.planar.mechanism": {
       "emitted": 1
@@ -14,11 +14,12 @@
       "emitted": 1
     },
     "mbsd.spatial.model": {
-      "emitted": 2,
-      "readable": [1, 2],
+      "emitted": 3,
+      "readable": [1, 2, 3],
       "validation": {
         "1": "header_only",
-        "2": "structural_and_semantic"
+        "2": "structural_and_semantic",
+        "3": "structural_and_semantic"
       }
     },
     "mbsd.spatial.kinematic_result": {
@@ -45,10 +46,16 @@
       "capability": "unconstrained_coupled_six_dof_rigid_body_dynamics"
     },
     "mbsd.spatial.constrained_rigid_body_dynamic_result": {
+      "emitted": 2,
+      "readable": [1, 2],
+      "validation": "structural_and_semantic",
+      "capability": "constrained_spatial_rigid_body_dynamics"
+    },
+    "mbsd.interop.transform_tracks": {
       "emitted": 1,
       "readable": [1],
       "validation": "structural_and_semantic",
-      "capability": "constrained_spatial_rigid_body_dynamics"
+      "consumers": ["freecad_reference", "blender_reference", "browser_reference"]
     }
   }
 }

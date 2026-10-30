@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.9.5 - Interoperability and Contract Hardening
+
+- Replace the revolute joint's fixed-logarithm chart with transverse relative-
+  quaternion constraints that cross 180 degrees and support multiple turns.
+- Add constrained-result schema version 2 with mechanism binding, deterministic
+  simulation identity, strict semantic validation, exported Jacobians,
+  interaction histories, and checked force/torque reactions.
+- Use sampled coordinate-drive histories in constrained excitation identity and
+  record solver, projection, stabilization, and effective-inertia controls.
+- Replace the fixed forward `Jdot*v` difference with a speed-scaled central
+  Richardson directional derivative and explicit drive acceleration.
+- Add spatial-model schema version 3 with stable entity IDs and an explicit
+  revolute-joint contract while retaining readers for versions 1 and 2.
+- Publish JSON Schemas and an engine-neutral transform-track handoff with
+  explicit axes, units, quaternions, capabilities, optional geometry
+  references, and artifact identity for kinematic and dynamic results.
+- Keep external-engine dependencies out of core; companion examples provide
+  dependency-free FreeCAD, Blender, and browser/PWA reference mappings.
+
 ## v0.9.4 - Constrained Rotational Dynamics
 
 - Add coupled Lagrange-multiplier dynamics for spatial rigid bodies with

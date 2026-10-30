@@ -752,6 +752,19 @@ class SpatialMechanism:
             values[offset + index] = -_finite_scalar(drive.velocity(t), "drive velocity")
         return values
 
+    def constraint_second_time_derivative(
+        self, poses: Iterable[Pose3D], t: float = 0.0
+    ) -> np.ndarray:
+        """Return the explicit second time derivative of constraint laws."""
+        poses = self._validate_poses(poses)
+        values = np.zeros(len(self.constraint_residual(poses, t)))
+        offset = (6 if self._ground is not None else 0) + sum(
+            len(joint.residual(poses)) for joint in self._joints
+        )
+        for index, drive in enumerate(self._drives):
+            values[offset + index] = -drive.acceleration_value(t)
+        return values
+
     def model_diagnostics(
         self, poses: Iterable[Pose3D] | None = None, t: float = 0.0
     ) -> SpatialModelDiagnostics:
