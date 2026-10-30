@@ -10,13 +10,20 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from .builder import BodyHandle, DynamicsResult, KinematicResult, PlanarMechanism
+from .builder import (
+    BodyHandle,
+    DynamicsResult,
+    InverseDynamicsResult,
+    KinematicResult,
+    PlanarMechanism,
+)
 from .forces import Spring
 from .kinematics import point_acceleration, point_position, point_velocity
 from .model import MBody
 
 
 SCHEMA_VERSION = 1
+JOINT_LOADS_SCHEMA_VERSION = 1
 
 
 def _units() -> dict[str, str]:
@@ -55,8 +62,21 @@ def mechanism_to_dict(
 ) -> dict[str, Any]:
     """Return a JSON-ready description of a planar mechanism."""
     mbody = _as_mbody(mechanism)
+    registered_springs = list(getattr(mechanism, "springs", []))
+    loads = list(getattr(mechanism, "loads", []))
+    all_springs = registered_springs + list(() if springs is None else springs)
+    user_constraints = [
+        _user_constraint_to_dict(index, constraint)
+        for index, constraint in enumerate(mbody.user_constraints)
+    ]
+    portable = (
+        all(item.get("portable", False) for item in user_constraints)
+        and all(load.portable for load in loads)
+        and not (mbody.leva_joints or mbody.punto_linea_joints or mbody.gear_joints)
+    )
     return {
         "schema": "mbsd.planar.mechanism",
+        "portable": portable,
         "schema_version": SCHEMA_VERSION,
         "mbsd_version": _package_version(),
         "dimension": 2,
@@ -86,6 +106,7 @@ def mechanism_to_dict(
             "revolute": [
                 {
                     "index": index,
+                    "name": joint.name or f"pin_{index}",
                     "body_i": joint.i,
                     "body_j": joint.j,
                     "point_i": _vector(joint.ri),
@@ -96,6 +117,7 @@ def mechanism_to_dict(
             "prismatic": [
                 {
                     "index": index,
+                    "name": joint.name or f"slider_{index}",
                     "rail_body": joint.i,
                     "slider_body": joint.j,
                     "point_rail": _vector(joint.ri),
@@ -106,16 +128,14 @@ def mechanism_to_dict(
                 for index, joint in enumerate(mbody.prism_joints)
             ],
         },
-        "user_constraints": [
-            _user_constraint_to_dict(index, constraint)
-            for index, constraint in enumerate(mbody.user_constraints)
-        ],
+        "user_constraints": user_constraints,
         "forces": {
             "gravity": _vector(mbody.g),
             "springs": [
                 _spring_to_dict(mbody, index, spring)
-                for index, spring in enumerate(() if springs is None else springs)
+                for index, spring in enumerate(all_springs)
             ],
+            "loads": [_json_ready(load.to_dict()) for load in loads],
             "custom": [],
         },
     }
@@ -150,7 +170,7 @@ def result_to_dict(
         "schema": "mbsd.planar.result",
         "schema_version": SCHEMA_VERSION,
         "mbsd_version": _package_version(),
-        "result_type": "kinematic" if hasattr(result, "a") else "dynamic",
+        "result_type": _result_type(result),
         "dimension": 2,
         "units": _units(),
         "conventions": _conventions(),
@@ -164,8 +184,11 @@ def result_to_dict(
     }
     if hasattr(result, "a"):
         payload["coordinates"]["a"] = _matrix(result.a)
-    else:
+    if hasattr(result, "provenance"):
         payload["provenance"] = _metadata(dict(result.provenance))
+    multipliers = getattr(result, "multipliers", None)
+    if multipliers is not None:
+        payload["coordinates"]["multipliers"] = _matrix(multipliers)
     if include_diagnostics:
         payload["diagnostics"] = mechanism.diagnostics(result).as_dict()
     return payload
@@ -397,6 +420,9 @@ def _user_constraint_to_dict(index: int, constraint: Any) -> dict[str, Any]:
         "count": int(constraint.count),
     }
     payload.update(_json_ready(metadata))
+    payload.setdefault("portable", False)
+    if not payload["portable"]:
+        payload["opaque"] = True
     return payload
 
 
@@ -416,7 +442,7 @@ def _spring_to_dict(mbody: MBody, index: int, spring: Spring) -> dict[str, Any]:
     natural_length = _finite_scalar(spring.l0, "spring natural length")
     if natural_length < 0.0:
         raise ValueError("spring natural length must be non-negative")
-    return {
+    payload = {
         "index": index,
         "kind": "linear_spring_damper",
         "body_i": body_i,
@@ -427,6 +453,10 @@ def _spring_to_dict(mbody: MBody, index: int, spring: Spring) -> dict[str, Any]:
         "damping": damping,
         "natural_length": natural_length,
     }
+    name = getattr(spring, "name", None)
+    if name:
+        payload["name"] = name
+    return payload
 
 
 def _body_index(mbody: MBody, body: Any) -> int:
@@ -516,3 +546,187 @@ def _slug(value: str) -> str:
     chars = [char.lower() if char.isalnum() else "_" for char in value]
     slug = "".join(chars).strip("_")
     return slug or "body"
+
+
+def _result_type(result: Any) -> str:
+    if isinstance(result, InverseDynamicsResult):
+        return "inverse_dynamic"
+    return "kinematic" if hasattr(result, "a") else "dynamic"
+
+
+def joint_loads_to_dict(
+    mechanism: PlanarMechanism,
+    result: InverseDynamicsResult | DynamicsResult,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a versioned joint-load history: the FEM / sizing handoff payload."""
+    loads = mechanism.joint_loads(result)
+    bodies = mechanism.model.bodies
+    joints = []
+    for name, record in loads.joints.items():
+        joints.append(
+            {
+                "name": name,
+                "kind": record["kind"],
+                "body_i": {"index": record["body_i"], "name": bodies[record["body_i"]].name},
+                "body_j": {"index": record["body_j"], "name": bodies[record["body_j"]].name},
+                "point": {"x": _vector(record["point"][0]), "y": _vector(record["point"][1])},
+                "on_body_i": {
+                    "fx": _vector(record["force_on_i"][0]),
+                    "fy": _vector(record["force_on_i"][1]),
+                    "moment": _vector(record["moment_on_i"]),
+                },
+                "on_body_j": {
+                    "fx": _vector(record["force_on_j"][0]),
+                    "fy": _vector(record["force_on_j"][1]),
+                    "moment": _vector(record["moment_on_j"]),
+                },
+            }
+        )
+    drives = []
+    for name, record in loads.drives.items():
+        coordinate = record["coordinate"]
+        drives.append(
+            {
+                "name": name,
+                "body": {"index": record["body"], "name": bodies[record["body"]].name},
+                "coordinate": coordinate,
+                "effort_unit": "N*m" if coordinate == "theta" else "N",
+                "effort": _vector(record["effort"]),
+                "power": _vector(record["power"]),
+            }
+        )
+    return {
+        "schema": "mbsd.planar.joint_loads",
+        "schema_version": JOINT_LOADS_SCHEMA_VERSION,
+        "mbsd_version": _package_version(),
+        "dimension": 2,
+        "result_type": _result_type(result),
+        "units": {**_units(), "power": "W"},
+        "conventions": {
+            **_conventions(),
+            "force_frame": "world",
+            "joint_point": "body_j_attachment_point_world",
+            "moments": "about_joint_point_counterclockwise_positive",
+            "frame_moment": "about_world_origin",
+            "drive_effort": "generalized_force_applied_by_drive_to_coordinate",
+            "drive_reaction": "actuators_react_against_ground",
+        },
+        "metadata": _metadata(metadata),
+        "time": _vector(loads.t),
+        "joints": joints,
+        "drives": drives,
+        "frame": {
+            "fx": _vector(loads.frame["force"][0]),
+            "fy": _vector(loads.frame["force"][1]),
+            "moment": _vector(loads.frame["moment"]),
+        },
+        "diagnostics": {"max_action_reaction_residual": loads.max_action_reaction_residual},
+    }
+
+
+def joint_loads_to_json(
+    mechanism: PlanarMechanism,
+    result: InverseDynamicsResult | DynamicsResult,
+    path: str | Path,
+    *,
+    indent: int = 2,
+    metadata: dict[str, Any] | None = None,
+) -> Path:
+    """Write the joint-load history payload as JSON and return its path."""
+    return _write_json(
+        joint_loads_to_dict(mechanism, result, metadata=metadata), path, indent=indent
+    )
+
+
+def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
+    """Rebuild a planar mechanism from a ``mbsd.planar.mechanism`` v1 payload.
+
+    Rejects opaque entries (Python-callable drives, callback loads, raw user
+    constraints) with ``NotPortableError``.
+    """
+    from ..errors import MechanismSolveError, NotPortableError
+    from .laws import law_from_dict
+    from .loads import load_from_dict
+
+    if payload.get("schema") != "mbsd.planar.mechanism":
+        raise MechanismSolveError(
+            f"Not a planar mechanism payload: schema={payload.get('schema')!r}.",
+            code="schema_mismatch",
+        )
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        raise MechanismSolveError(
+            f"Unsupported planar mechanism schema_version={payload.get('schema_version')!r}.",
+            code="unsupported_schema_version",
+            context={"readable": [SCHEMA_VERSION]},
+        )
+    mechanism = PlanarMechanism(gravity=payload["gravity"])
+    bodies = sorted(payload["bodies"], key=lambda body: body["index"])
+    for body in bodies:
+        if body["index"] == 0:
+            mechanism.ground(body["name"])
+        else:
+            mechanism.body(
+                body["name"],
+                mass=body["mass"],
+                inertia=body["inertia"],
+                center_of_mass=body["center_of_mass"],
+            )
+    joints = payload.get("joints", {})
+    for joint in joints.get("revolute", []):
+        mechanism.pin(
+            joint["body_i"],
+            joint["body_j"],
+            point_a=joint["point_i"],
+            point_b=joint["point_j"],
+            name=joint.get("name"),
+        )
+    for joint in joints.get("prismatic", []):
+        mechanism.slider(
+            joint["rail_body"],
+            joint["slider_body"],
+            axis=joint["axis"],
+            point_rail=joint["point_rail"],
+            point_slider=joint["point_slider"],
+            name=joint.get("name"),
+        )
+    for drive in payload.get("user_constraints", []):
+        kind = drive.get("kind")
+        name = drive.get("name")
+        if kind == "motor":
+            mechanism.motor(drive["body"], omega=drive["omega"], phase=drive["phase"], name=name)
+        elif kind == "coordinate_drive" and "law" in drive:
+            mechanism.coordinate_drive(
+                drive["body"], drive["coordinate"], law=law_from_dict(drive["law"]), name=name
+            )
+        else:
+            raise NotPortableError(
+                f"User constraint {name or drive.get('index')!r} ({kind}) has no portable "
+                "descriptor and cannot be imported.",
+                context={"user_constraint": drive.get("index"), "kind": kind},
+                remediation="Rebuild it with motor() or coordinate_drive(law=...).",
+            )
+    forces = payload.get("forces", {})
+    for spring in forces.get("springs", []):
+        mechanism.spring(
+            spring["body_i"],
+            spring["body_j"],
+            stiffness=spring["stiffness"],
+            natural_length=spring["natural_length"],
+            damping=spring["damping"],
+            point_a=spring["point_i"],
+            point_b=spring["point_j"],
+            name=spring.get("name"),
+        )
+    for load in forces.get("loads", []):
+        descriptor = load_from_dict(load)
+        mechanism._idx(descriptor.body)
+        mechanism._claim_name(descriptor.name, "load")
+        mechanism.loads.append(descriptor)
+    return mechanism
+
+
+def mechanism_from_json(path: str | Path) -> PlanarMechanism:
+    """Read a planar mechanism JSON file written by ``to_json``."""
+    return mechanism_from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

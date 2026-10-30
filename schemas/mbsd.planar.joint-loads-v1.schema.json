@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multibodysystemsdynamics.com/schemas/mbsd.planar.joint-loads-v1.schema.json",
+  "title": "MBSD Planar Joint Loads v1",
+  "type": "object",
+  "required": ["schema", "schema_version", "mbsd_version", "dimension", "result_type", "units", "conventions", "time", "joints", "drives", "frame", "diagnostics"],
+  "properties": {
+    "schema": {"const": "mbsd.planar.joint_loads"},
+    "schema_version": {"const": 1},
+    "mbsd_version": {"type": "string"},
+    "dimension": {"const": 2},
+    "result_type": {"enum": ["dynamic", "inverse_dynamic"]},
+    "units": {
+      "type": "object",
+      "required": ["force", "torque", "length", "time", "power"],
+      "properties": {
+        "force": {"const": "N"},
+        "torque": {"const": "N*m"},
+        "length": {"const": "m"},
+        "time": {"const": "s"},
+        "power": {"const": "W"}
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "required": ["force_frame", "joint_point", "moments", "frame_moment", "drive_effort", "drive_reaction"],
+      "properties": {
+        "force_frame": {"const": "world"},
+        "joint_point": {"const": "body_j_attachment_point_world"},
+        "moments": {"const": "about_joint_point_counterclockwise_positive"},
+        "frame_moment": {"const": "about_world_origin"},
+        "drive_effort": {"const": "generalized_force_applied_by_drive_to_coordinate"},
+        "drive_reaction": {"const": "actuators_react_against_ground"}
+      }
+    },
+    "metadata": {"type": "object"},
+    "time": {"$ref": "#/$defs/series"},
+    "joints": {"type": "array", "items": {"$ref": "#/$defs/joint"}},
+    "drives": {"type": "array", "items": {"$ref": "#/$defs/drive"}},
+    "frame": {"$ref": "#/$defs/load"},
+    "diagnostics": {
+      "type": "object",
+      "required": ["max_action_reaction_residual"],
+      "properties": {"max_action_reaction_residual": {"type": "number", "minimum": 0}}
+    }
+  },
+  "$defs": {
+    "series": {"type": "array", "minItems": 1, "items": {"type": "number"}},
+    "body_ref": {
+      "type": "object",
+      "required": ["index", "name"],
+      "properties": {"index": {"type": "integer", "minimum": 0}, "name": {"type": "string"}}
+    },
+    "load": {
+      "type": "object",
+      "required": ["fx", "fy", "moment"],
+      "properties": {
+        "fx": {"$ref": "#/$defs/series"},
+        "fy": {"$ref": "#/$defs/series"},
+        "moment": {"$ref": "#/$defs/series"}
+      }
+    },
+    "joint": {
+      "type": "object",
+      "required": ["name", "kind", "body_i", "body_j", "point", "on_body_i", "on_body_j"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["revolute", "prismatic", "cam", "point_on_line", "gear"]},
+        "body_i": {"$ref": "#/$defs/body_ref"},
+        "body_j": {"$ref": "#/$defs/body_ref"},
+        "point": {
+          "type": "object",
+          "required": ["x", "y"],
+          "properties": {"x": {"$ref": "#/$defs/series"}, "y": {"$ref": "#/$defs/series"}}
+        },
+        "on_body_i": {"$ref": "#/$defs/load"},
+        "on_body_j": {"$ref": "#/$defs/load"}
+      }
+    },
+    "drive": {
+      "type": "object",
+      "required": ["name", "body", "coordinate", "effort_unit", "effort", "power"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "body": {"$ref": "#/$defs/body_ref"},
+        "coordinate": {"enum": ["x", "y", "theta"]},
+        "effort_unit": {"enum": ["N", "N*m"]},
+        "effort": {"$ref": "#/$defs/series"},
+        "power": {"$ref": "#/$defs/series"}
+      }
+    }
+  }
+}

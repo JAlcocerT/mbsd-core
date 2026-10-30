@@ -42,7 +42,17 @@ def test_rotation_matrix_is_proper():
 
 
 def test_top_level_public_api_is_small():
-    assert sorted(mbsd.__all__) == ["Mechanism", "MechanismSolveError", "Spring"]
+    assert sorted(mbsd.__all__) == [
+        "ConstantSpeed",
+        "Mechanism",
+        "MechanismSolveError",
+        "NotPortableError",
+        "Polynomial",
+        "Spring",
+        "Tabulated",
+        "capabilities",
+        "operation_manifest",
+    ]
 
 
 def test_package_version_matches_installed_metadata():

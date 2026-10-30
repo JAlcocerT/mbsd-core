@@ -21,6 +21,7 @@ examples:
 	$(UV) run python examples/planar_driven_slider.py
 	$(UV) run python examples/planar_mass_spring.py
 	$(UV) run python examples/planar_slider_crank_analysis.py
+	$(UV) run python examples/planar_slider_crank_reactions.py
 
 check: test examples
 

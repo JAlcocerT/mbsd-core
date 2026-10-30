@@ -23,7 +23,7 @@ handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.9.5
+git checkout v0.9.6
 uv sync --extra dev
 ```
 
@@ -101,12 +101,60 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
   physical reaction loads, projection, and stabilization controls in `0.9.4`.
 - Strict constrained-result identity and validation plus engine-neutral
   FreeCAD/Blender/browser transform handoffs in `0.9.5`.
+- Planar inverse dynamics, named joint reactions, drive efforts, frame
+  (shaking) loads, portable motion laws and load descriptors, model import,
+  and `validate` / `check` guardrails in `0.9.6`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
 The restricted planar and fixed-orientation preview paths retain their stated
 center-of-mass limitations. The unconstrained coupled and constrained six-DOF
 spatial solvers support offset centers of mass and export the distinction
 between center-of-mass state and body reference-origin pose.
+
+## Planar Reactions and Guardrails
+
+MBSD `0.9.6` turns planar Lagrange multipliers into physical loads and adds
+pre- and post-solve guardrails that agents and tools can read as data.
+
+```python
+import numpy as np
+from mbsd import Mechanism
+
+m = Mechanism.planar(gravity=(0.0, -9.81))
+ground = m.ground()
+rod = m.body("rod", mass=2.0, inertia=2.0 / 12)
+m.pin(ground, rod, point_b=(-0.5, 0.0), name="shoulder")
+m.motor(rod, omega=1.0, name="actuator")
+
+q0 = np.array([0, 0, 0, 0.5, 0, 0], dtype=float)
+print(m.validate(q0).as_dict())               # DOF, rank, portability, issues
+
+result = m.inverse_dynamics(np.linspace(0.0, 1.0, 101), q0=q0)
+print(m.check(result).passed)                 # residuals + equation-of-motion balance
+loads = m.joint_loads(result)
+loads.joints["shoulder"]["force_on_j"]        # world-frame pin force on the rod
+loads.drives["actuator"]["effort"]            # motor torque, N*m
+loads.frame["force"]                          # load the mechanism puts on ground
+m.joint_loads_to_json(result, "loads.json")   # mbsd.planar.joint_loads v1
+```
+
+- `simulate()` results also carry multipliers, so `joint_loads()` works on
+  forward dynamics.
+- Joint forces are world-frame; moments are about the joint's world point
+  (the body-j attachment point). Drive effort is the force or torque a drive
+  applies to its coordinate; `frame` assumes actuators react against ground.
+- Portable inputs are data: `coordinate_drive(law=ConstantSpeed(...) |
+  Polynomial(...) | Tabulated(...))`, `spring()`, `constant_force()`,
+  `constant_torque()`, `tabulated_force()`, `tabulated_torque()`.
+  `PlanarMechanism.from_json()` rebuilds them exactly.
+- Python callables (`coordinate_drive(value, velocity, acceleration)`,
+  `force(fn)`) still work but are exported as opaque. `validate()` reports
+  the model as non-portable and `from_json()` raises `NotPortableError`.
+- `mbsd.capabilities()` and `mbsd.operation_manifest()` describe the public
+  operations, error codes, and validation codes as plain data
+  (`schemas/mbsd.operations-v1.json`).
+- `max_steps` and `max_evaluations` bound work; errors carry a stable `code`,
+  `context`, and `remediation`.
 
 ## Experimental Spatial Vocabulary
 
@@ -318,6 +366,7 @@ and projection settings, package version, and underconstraint policy in their
 uv run python examples/planar_driven_slider.py
 uv run python examples/planar_mass_spring.py
 uv run python examples/planar_slider_crank_analysis.py
+uv run python examples/planar_slider_crank_reactions.py
 ```
 
 ## Tests
@@ -383,13 +432,21 @@ The handoff schemas available since `0.4.0` are:
   accelerations, body poses, diagnostics, units, conventions, and metadata.
 - `mbsd.planar.point_trace`: position, velocity, and optional acceleration for
   a named point expressed in a body's local frame.
+- `mbsd.planar.joint_loads` (since `0.9.6`): named joint reactions, drive
+  efforts and power, and the frame load over time.
+
+Since `0.9.6`, mechanism payloads also carry joint and drive names, portable
+motion laws, registered springs, load descriptors, and a top-level `portable`
+flag, and `PlanarMechanism.from_json()` reads them back. Dynamic and
+inverse-dynamic result payloads include the sampled multipliers.
 
 Every JSON payload contains `schema`, `schema_version`, and `mbsd_version`.
 Lengths use metres, angles use radians, time uses seconds, and rotations are
 counterclockwise-positive in an inertial XY frame. Array-valued result data is
 stored component-by-time. CSV headers carry their SI units.
 
-Springs are supplied explicitly when exporting a mechanism:
+Springs can be registered with `m.spring(...)` (preferred since `0.9.6`, so
+every solve and export uses them) or supplied explicitly when exporting:
 
 ```python
 from mbsd import Spring
@@ -399,8 +456,9 @@ m.to_json("mechanism.json", springs=[spring], metadata={"consumer": "cad"})
 ```
 
 A spring must have an explicit natural length to be portable. Arbitrary Python
-force callbacks are intentionally not serialized; consumers should exchange
-supported force descriptors or application-specific metadata instead.
+force callbacks are intentionally not serialized: `force(fn)` loads and
+callable drives are exported as opaque entries, and importers reject them.
+Exchange the supported force and motion-law descriptors instead.
 
 ## Consulting
 

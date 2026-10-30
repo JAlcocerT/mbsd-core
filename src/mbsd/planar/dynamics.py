@@ -306,7 +306,8 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
                          contacts=None, surface_contacts=None,
                          alpha_baumgarte=0.0, beta_baumgarte=0.0,
                          allow_underconstrained=False,
-                         position_tol=1e-8, velocity_tol=1e-8):
+                         position_tol=1e-8, velocity_tol=1e-8,
+                         max_evaluations=None):
     """Solve dynamics using scipy.integrate.solve_ivp.
 
     Integrates the constrained dynamics equations:
@@ -340,6 +341,8 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
             minimum-norm underconstrained solve permitted by the public facade.
         position_tol, velocity_tol: positive tolerances used to reject an
             inconsistent initial position or velocity before integration.
+        max_evaluations: optional cap on right-hand-side evaluations; exceeding
+            it raises ``MechanismSolveError(code="resource_limit")``.
 
     Returns:
         sol: scipy OdeResult object with attributes t, y (solution at times)
@@ -409,6 +412,11 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
             f"{mbody.nrestr} constraints for {mbody.ncoord} coordinates."
         )
     use_baumgarte = (alpha_baumgarte != 0.0) or (beta_baumgarte != 0.0)
+    if max_evaluations is not None:
+        max_evaluations = int(max_evaluations)
+        if max_evaluations <= 0:
+            raise MechanismSolveError("max_evaluations must be a positive integer.")
+    evaluations = 0
 
     def dynamics_rhs(t, state):
         """Right-hand side for ODE solver.
@@ -416,6 +424,15 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
         state = [q, v] (concatenated)
         Uses constrained dynamics with Lagrange multipliers.
         """
+        nonlocal evaluations
+        evaluations += 1
+        if max_evaluations is not None and evaluations > max_evaluations:
+            raise MechanismSolveError(
+                f"Integration exceeded max_evaluations={max_evaluations} at t={t:.6g}.",
+                code="resource_limit",
+                context={"max_evaluations": max_evaluations, "t": float(t)},
+                remediation="Loosen tolerances, shorten the time span, or raise the budget.",
+            )
         ncoord = mbody.ncoord
         q = state[:ncoord]
         v = state[ncoord:]

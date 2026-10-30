@@ -1,7 +1,7 @@
 # MBSD Portable Schemas
 
 These JSON Schemas describe the engine-neutral payloads emitted by MBSD
-`0.9.5`. Runtime readers remain authoritative because they additionally check
+`0.9.6`. Runtime readers remain authoritative because they additionally check
 cross-field physics invariants, identities, and force/reaction balances.
 
 - `mbsd.spatial.model-v3.schema.json`: spatial bodies, frames, and stable joint
@@ -10,6 +10,11 @@ cross-field physics invariants, identities, and force/reaction balances.
   reaction, multiplier, identity, and provenance records.
 - `mbsd.interop.transform-tracks-v1.schema.json`: transform animation handoff
   consumed by the FreeCAD-, Blender-, browser-, and generic reference adapters.
+- `mbsd.planar.joint-loads-v1.schema.json`: named planar joint reactions,
+  drive efforts and power, and the frame load over time; the handoff for FEM
+  and drive-sizing workflows.
+- `mbsd.operations-v1.json`: the operation manifest (not a JSON Schema). It is
+  generated from `mbsd.operation_manifest()` and a test keeps them identical.
 
 Schema changes are additive only within a version. New required fields, changed
 meanings, removed fields, and new closed-enum values require a new schema

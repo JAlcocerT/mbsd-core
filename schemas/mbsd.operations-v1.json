@@ -1,0 +1,181 @@
+{
+  "error_codes": {
+    "integration_failed": "The time integrator reported failure.",
+    "missing_multipliers": "The result carries no Lagrange multipliers (kinematic result).",
+    "not_kinematically_driven": "Inverse dynamics needs drives for every degree of freedom.",
+    "not_portable": "A Python callback cannot be serialized or imported.",
+    "resource_limit": "max_steps or max_evaluations was exceeded.",
+    "schema_mismatch": "The payload is not the expected schema family.",
+    "solve_failed": "Generic singular, inconsistent, or divergent solve.",
+    "unsupported_schema_version": "The payload schema version cannot be read."
+  },
+  "operations": [
+    {
+      "call": "mbsd.capabilities()",
+      "errors": [],
+      "inputs": {},
+      "name": "capabilities",
+      "returns": "dict",
+      "summary": "Static description of supported dimensions, joints, solvers and limits."
+    },
+    {
+      "call": "PlanarMechanism.from_json(path)",
+      "errors": [
+        "schema_mismatch",
+        "unsupported_schema_version",
+        "not_portable"
+      ],
+      "inputs": {
+        "path": "str"
+      },
+      "name": "load",
+      "returns": "PlanarMechanism",
+      "summary": "Rebuild a planar mechanism from a portable mbsd.planar.mechanism payload."
+    },
+    {
+      "call": "mechanism.validate(q0=None, t=0.0)",
+      "errors": [],
+      "inputs": {
+        "q0": "list[float] | None",
+        "t": "float | list[float]"
+      },
+      "name": "validate",
+      "returns": "ValidationReport",
+      "summary": "Pre-solve report: DOF, rank, portability, table domains, resource limits."
+    },
+    {
+      "call": "mechanism.solve_kinematics(t, q0=None, max_steps=100000)",
+      "errors": [
+        "solve_failed",
+        "resource_limit"
+      ],
+      "inputs": {
+        "max_steps": "int",
+        "q0": "list[float] | None",
+        "t": "list[float]"
+      },
+      "name": "solve_kinematics",
+      "returns": "KinematicResult",
+      "summary": "Position, velocity and acceleration of a fully driven mechanism."
+    },
+    {
+      "call": "mechanism.simulate(t, q0, v0=None, max_steps=100000, max_evaluations=None)",
+      "errors": [
+        "solve_failed",
+        "integration_failed",
+        "resource_limit"
+      ],
+      "inputs": {
+        "allow_underconstrained": "bool",
+        "max_evaluations": "int | None",
+        "max_steps": "int",
+        "q0": "list[float]",
+        "t": "list[float]",
+        "v0": "list[float] | None"
+      },
+      "name": "simulate",
+      "returns": "DynamicsResult",
+      "summary": "Forward constrained dynamics; the result carries sampled multipliers."
+    },
+    {
+      "call": "mechanism.inverse_dynamics(t, q0=None, max_steps=100000)",
+      "errors": [
+        "not_kinematically_driven",
+        "solve_failed",
+        "resource_limit"
+      ],
+      "inputs": {
+        "max_steps": "int",
+        "q0": "list[float] | None",
+        "t": "list[float]"
+      },
+      "name": "inverse_dynamics",
+      "returns": "InverseDynamicsResult",
+      "summary": "Multipliers that sustain a fully driven motion."
+    },
+    {
+      "call": "mechanism.joint_loads(result)",
+      "errors": [
+        "missing_multipliers"
+      ],
+      "inputs": {
+        "result": "DynamicsResult | InverseDynamicsResult"
+      },
+      "name": "joint_loads",
+      "returns": "JointLoads",
+      "summary": "Named joint reactions, drive efforts and the frame (shaking) load."
+    },
+    {
+      "call": "mechanism.check(result)",
+      "errors": [],
+      "inputs": {
+        "result": "KinematicResult | DynamicsResult | InverseDynamicsResult"
+      },
+      "name": "check",
+      "returns": "CheckReport",
+      "summary": "Pass/fail verdict: residuals, energy drift or equation-of-motion balance."
+    },
+    {
+      "call": "mechanism.to_json(path)",
+      "errors": [],
+      "inputs": {
+        "path": "str"
+      },
+      "name": "export_model",
+      "returns": "path",
+      "summary": "Write the portable mechanism payload (mbsd.planar.mechanism v1)."
+    },
+    {
+      "call": "mechanism.result_to_json(result, path)",
+      "errors": [],
+      "inputs": {
+        "path": "str",
+        "result": "result"
+      },
+      "name": "export_result",
+      "returns": "path",
+      "summary": "Write the trajectory payload (mbsd.planar.result v1)."
+    },
+    {
+      "call": "mechanism.joint_loads_to_json(result, path)",
+      "errors": [
+        "missing_multipliers"
+      ],
+      "inputs": {
+        "path": "str",
+        "result": "DynamicsResult | InverseDynamicsResult"
+      },
+      "name": "export_joint_loads",
+      "returns": "path",
+      "summary": "Write the joint-load history payload (mbsd.planar.joint_loads v1)."
+    }
+  ],
+  "safety": {
+    "callbacks": "python_only_and_reported_non_portable",
+    "default_max_steps": 100000,
+    "portable_payloads_execute_code": false
+  },
+  "schema": "mbsd.operations",
+  "schema_version": 1,
+  "validation_codes": {
+    "empty_model": "error",
+    "low_level_joint": "warning",
+    "offset_center_of_mass": "error",
+    "opaque_constraint": "warning",
+    "opaque_drive": "warning",
+    "opaque_load": "warning",
+    "overconstrained": "error",
+    "position_solve_failed": "error",
+    "rank_deficient": "error",
+    "resource_limit": "error",
+    "time_outside_table": "error",
+    "underconstrained": "info"
+  },
+  "workflow": [
+    "build_or_load",
+    "validate",
+    "solve",
+    "check",
+    "export"
+  ]
+}

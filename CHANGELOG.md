@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.9.6 - Planar Reactions, Portable Descriptors, and Guardrails
+
+- Add `PlanarMechanism.inverse_dynamics()` for fully driven mechanisms and
+  return sampled Lagrange multipliers on every `simulate()` result.
+- Add `joint_loads()`: named joint reactions (world-frame force and moment
+  about the joint point on both bodies), drive effort and power, and the
+  frame (shaking) load on ground, with an action-reaction residual.
+- Add the versioned `mbsd.planar.joint_loads` v1 payload and JSON Schema as
+  the handoff for FEM and drive-sizing workflows.
+- Name pins, sliders, motors, and drives (`pin_N`, `slider_N`, `motor_N`,
+  `drive_N` by default); names are unique and exported.
+- Add portable motion laws (`ConstantSpeed`, `Polynomial`, `Tabulated`) via
+  `coordinate_drive(law=...)`; Python callables still work but are exported as
+  opaque and non-portable.
+- Add registered springs and load descriptors (`spring`, `constant_force`,
+  `constant_torque`, `tabulated_force`, `tabulated_torque`) plus the
+  non-portable `force(fn)` callback escape hatch.
+- Add `PlanarMechanism.from_dict()` / `from_json()`; a `to_json` /
+  `from_json` round trip reproduces solves exactly. Opaque entries raise
+  `NotPortableError`.
+- Add `validate()` (pre-solve structured issues with stable codes) and
+  `check()` (pass/fail verdict on residuals, energy drift, or
+  equation-of-motion balance, with thresholds).
+- Add `mbsd.capabilities()` and `mbsd.operation_manifest()`, with a generated
+  `schemas/mbsd.operations-v1.json` for non-Python consumers.
+- Add `code`, `context`, and `remediation` to `MechanismSolveError`, and
+  `max_steps` / `max_evaluations` resource guards (`code="resource_limit"`).
+- Export `portable` flags in mechanism payloads and multipliers in dynamic
+  result payloads; the mechanism schema stays at version 1 (additive fields).
+- Planar offset-center-of-mass dynamics remain rejected; `validate()` now
+  reports it before solving.
+
 ## v0.9.5 - Interoperability and Contract Hardening
 
 - Replace the revolute joint's fixed-logarithm chart with transverse relative-

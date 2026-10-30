@@ -28,6 +28,7 @@ class RevJoint:
     j: int
     ri: np.ndarray
     rj: np.ndarray
+    name: str = ""
 
 
 @dataclass
@@ -39,6 +40,7 @@ class PrismJoint:
     ri: np.ndarray
     rj: np.ndarray
     hi: np.ndarray
+    name: str = ""
 
 
 @dataclass
@@ -98,6 +100,8 @@ class UserConstraint:
     dt_constraint_fn: Callable
     dtdt_constraint_fn: Callable
     count: int = 1
+    name: str = ""
+    metadata: dict = field(default_factory=dict)
 
 
 class MBody:

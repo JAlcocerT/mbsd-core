@@ -1,16 +1,29 @@
 {
-  "release": "0.9.5",
-  "core_ref": "v0.9.5",
-  "examples_ref": "v0.9.5",
-  "examples_core_range": ">=0.9.5,<0.10",
+  "release": "0.9.6",
+  "core_ref": "v0.9.6",
+  "examples_ref": "v0.9.6",
+  "examples_core_range": ">=0.9.6,<0.10",
   "schemas": {
     "mbsd.planar.mechanism": {
-      "emitted": 1
+      "emitted": 1,
+      "readable": [1],
+      "validation": "structural_and_portability",
+      "importable": true
     },
     "mbsd.planar.result": {
       "emitted": 1
     },
     "mbsd.planar.point_trace": {
+      "emitted": 1
+    },
+    "mbsd.planar.joint_loads": {
+      "emitted": 1,
+      "validation": "json_schema"
+    },
+    "mbsd.operations": {
+      "emitted": 1
+    },
+    "mbsd.capabilities": {
       "emitted": 1
     },
     "mbsd.spatial.model": {
