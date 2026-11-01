@@ -36,8 +36,12 @@ class MechanismSolveError(RuntimeError):
         }
 
 
-class NotPortableError(MechanismSolveError):
-    """Raised when a model with Python callbacks is exported for import."""
+class NotPortableError(MechanismSolveError, ValueError):
+    """Raised when a model with Python callbacks is exported for import.
+
+    It is also a ``ValueError``, so callers that catch invalid payloads that
+    way keep working.
+    """
 
     def __init__(self, message: str, **kwargs: Any):
         kwargs.setdefault("code", "not_portable")

@@ -23,7 +23,12 @@ from .model import MBody
 
 
 SCHEMA_VERSION = 1
-JOINT_LOADS_SCHEMA_VERSION = 1
+# v2 adds point-on-line joints and distance drives; v0.9.6 readers reject it
+# instead of silently dropping those constraints.
+MECHANISM_SCHEMA_VERSION = 2
+READABLE_MECHANISM_SCHEMA_VERSIONS = (1, 2)
+# v2 adds distance drives, a drive kind, and the user-constraint block.
+JOINT_LOADS_SCHEMA_VERSION = 2
 
 
 def _units() -> dict[str, str]:
@@ -72,12 +77,12 @@ def mechanism_to_dict(
     portable = (
         all(item.get("portable", False) for item in user_constraints)
         and all(load.portable for load in loads)
-        and not (mbody.leva_joints or mbody.punto_linea_joints or mbody.gear_joints)
+        and not (mbody.leva_joints or mbody.gear_joints)
     )
     return {
         "schema": "mbsd.planar.mechanism",
         "portable": portable,
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": MECHANISM_SCHEMA_VERSION,
         "mbsd_version": _package_version(),
         "dimension": 2,
         "units": _units(),
@@ -90,6 +95,7 @@ def mechanism_to_dict(
             "constraints": mbody.nrestr,
             "revolute_joints": mbody.nr,
             "prismatic_joints": mbody.np_,
+            "point_on_line_joints": mbody.npl,
             "user_constraints": mbody.nrus,
         },
         "bodies": [
@@ -126,6 +132,18 @@ def mechanism_to_dict(
                     "normal": _vector(joint.hi),
                 }
                 for index, joint in enumerate(mbody.prism_joints)
+            ],
+            "point_on_line": [
+                {
+                    "index": index,
+                    "name": joint.name or f"point_on_line_{index}",
+                    "point_body": joint.i,
+                    "line_body": joint.j,
+                    "point": _vector(joint.ri),
+                    "line_point": _vector(joint.rj),
+                    "direction": _vector(joint.hi),
+                }
+                for index, joint in enumerate(mbody.punto_linea_joints)
             ],
         },
         "user_constraints": user_constraints,
@@ -587,16 +605,27 @@ def joint_loads_to_dict(
     drives = []
     for name, record in loads.drives.items():
         coordinate = record["coordinate"]
-        drives.append(
-            {
-                "name": name,
-                "body": {"index": record["body"], "name": bodies[record["body"]].name},
-                "coordinate": coordinate,
-                "effort_unit": "N*m" if coordinate == "theta" else "N",
-                "effort": _vector(record["effort"]),
-                "power": _vector(record["power"]),
-            }
-        )
+        entry = {
+            "name": name,
+            "kind": record.get("kind"),
+            "body": {"index": record["body"], "name": bodies[record["body"]].name},
+            "coordinate": coordinate,
+            "effort_unit": "N*m" if coordinate == "theta" else "N",
+            "effort": _vector(record["effort"]),
+            "power": _vector(record["power"]),
+        }
+        if record.get("body_a") is not None:
+            entry["body_a"] = {"index": record["body_a"], "name": bodies[record["body_a"]].name}
+        drives.append(entry)
+    constraints = [
+        {
+            "name": name,
+            "kind": record["kind"],
+            "rows": record["rows"],
+            "generalized_force": _matrix(record["generalized_force"]),
+        }
+        for name, record in loads.constraints.items()
+    ]
     return {
         "schema": "mbsd.planar.joint_loads",
         "schema_version": JOINT_LOADS_SCHEMA_VERSION,
@@ -608,15 +637,19 @@ def joint_loads_to_dict(
             **_conventions(),
             "force_frame": "world",
             "joint_point": "body_j_attachment_point_world",
+            "point_on_line_point": "riding_point_on_point_body_world",
             "moments": "about_joint_point_counterclockwise_positive",
             "frame_moment": "about_world_origin",
             "drive_effort": "generalized_force_applied_by_drive_to_coordinate",
+            "distance_drive_effort": "axial_force_positive_pushing_points_apart",
+            "distance_drive_reaction": "through_its_attachment_bodies",
             "drive_reaction": "actuators_react_against_ground",
         },
         "metadata": _metadata(metadata),
         "time": _vector(loads.t),
         "joints": joints,
         "drives": drives,
+        "constraints": constraints,
         "frame": {
             "fx": _vector(loads.frame["force"][0]),
             "fy": _vector(loads.frame["force"][1]),
@@ -641,7 +674,7 @@ def joint_loads_to_json(
 
 
 def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
-    """Rebuild a planar mechanism from a ``mbsd.planar.mechanism`` v1 payload.
+    """Rebuild a planar mechanism from a ``mbsd.planar.mechanism`` v1 or v2 payload.
 
     Rejects opaque entries (Python-callable drives, callback loads, raw user
     constraints) with ``NotPortableError``.
@@ -655,11 +688,11 @@ def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
             f"Not a planar mechanism payload: schema={payload.get('schema')!r}.",
             code="schema_mismatch",
         )
-    if payload.get("schema_version") != SCHEMA_VERSION:
+    if payload.get("schema_version") not in READABLE_MECHANISM_SCHEMA_VERSIONS:
         raise MechanismSolveError(
             f"Unsupported planar mechanism schema_version={payload.get('schema_version')!r}.",
             code="unsupported_schema_version",
-            context={"readable": [SCHEMA_VERSION]},
+            context={"readable": list(READABLE_MECHANISM_SCHEMA_VERSIONS)},
         )
     mechanism = PlanarMechanism(gravity=payload["gravity"])
     bodies = sorted(payload["bodies"], key=lambda body: body["index"])
@@ -691,6 +724,15 @@ def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
             point_slider=joint["point_slider"],
             name=joint.get("name"),
         )
+    for joint in joints.get("point_on_line", []):
+        mechanism.point_on_line(
+            joint["point_body"],
+            joint["line_body"],
+            point_a=joint["point"],
+            line_point_b=joint["line_point"],
+            direction_b=joint["direction"],
+            name=joint.get("name"),
+        )
     for drive in payload.get("user_constraints", []):
         kind = drive.get("kind")
         name = drive.get("name")
@@ -699,6 +741,11 @@ def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
         elif kind == "coordinate_drive" and "law" in drive:
             mechanism.coordinate_drive(
                 drive["body"], drive["coordinate"], law=law_from_dict(drive["law"]), name=name
+            )
+        elif kind == "distance_drive":
+            mechanism.distance_drive(
+                drive["body_a"], drive["body"], law=law_from_dict(drive["law"]),
+                point_a=drive["point_a"], point_b=drive["point_b"], name=name,
             )
         else:
             raise NotPortableError(

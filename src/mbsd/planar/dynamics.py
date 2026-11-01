@@ -21,22 +21,32 @@ from .derivatives import dt_constraints, dt_jacobian, dtdt_constraints
 from .solver import solve_position, solve_velocity, solve_acceleration_with_lagrange
 
 from .forces import (
-    mass_matrix, gravity_forces, spring_damper_forces,
+    mass_matrix, gravity_forces, quadratic_velocity_forces, spring_damper_forces,
     rotating_frame_pseudo_forces, potential_energy, kinetic_energy,
     ground_contact_forces, surface_contact_forces,
 )
 
 
-def ensure_centroidal_dynamics(mbody) -> None:
-    """Reject models whose unsupported offset-COM terms would corrupt dynamics."""
+def ensure_centroidal_dynamics(mbody, omega=0.0, alpha=0.0) -> None:
+    """Reject offset centers of mass only where they are still unsupported.
+
+    Offset-COM bodies are supported in inertial frames (the mass matrix holds
+    the coupling terms and ``quadratic_velocity_forces`` the centripetal
+    term). The rotating-frame pseudo-forces still assume centroidal bodies.
+    """
     from ..errors import MechanismSolveError
 
+    if not np.any(omega) and not np.any(alpha):
+        return
     for index, body in enumerate(mbody.bodies):
         if np.linalg.norm(body.rG, ord=np.inf) > 0.0:
             raise MechanismSolveError(
-                "Dynamics currently requires each body reference point to "
+                "Rotating-frame dynamics requires each body reference point to "
                 "coincide with its center of mass. "
-                f"Body {index} ({body.name!r}) has center_of_mass={body.rG}."
+                f"Body {index} ({body.name!r}) has center_of_mass={body.rG}.",
+                code="unsupported_capability",
+                remediation="Place the body reference point at its center of mass "
+                "or solve in an inertial frame.",
             )
 
 
@@ -65,7 +75,7 @@ def assemble_system(mbody, q, v, t, springs=None, Q_user=None,
     """
     M = mass_matrix(mbody, q)
 
-    Q_grav = gravity_forces(mbody, q)
+    Q_grav = gravity_forces(mbody, q) + quadratic_velocity_forces(mbody, q, v)
     Q_spring = spring_damper_forces(mbody, q, v, springs)
     Q_centrifugal = rotating_frame_pseudo_forces(mbody, q, omega, alpha, v=v)
     Q_contact = ground_contact_forces(mbody, q, v, contacts) if contacts else np.zeros(mbody.ncoord)
@@ -126,7 +136,7 @@ def solve_inverse_dynamics(mbody, q0, tspan, springs=None, Q_user_fn=None,
         Q_total_all:          (ncoord × nsteps) summed passive/applied forces
             (useful for checking the force balance afterwards)
     """
-    ensure_centroidal_dynamics(mbody)
+    ensure_centroidal_dynamics(mbody, omega, alpha)
     ncoord = mbody.ncoord
     nrestr = mbody.nrestr
     nsteps = len(tspan)
@@ -203,7 +213,7 @@ def solve_dynamics_rk45(
         lambda_all: Lagrange multipliers (nrestr x nsteps)
         reaction_all: generalized constraint reactions (ncoord x nsteps)
     """
-    ensure_centroidal_dynamics(mbody)
+    ensure_centroidal_dynamics(mbody, omega, alpha)
     sol = solve_dynamics_scipy(
         mbody,
         np.asarray(q0, dtype=float),
@@ -349,7 +359,7 @@ def solve_dynamics_scipy(mbody, q0, v0, t_eval, springs=None, Q_user_fn=None,
     """
     from ..errors import MechanismSolveError
 
-    ensure_centroidal_dynamics(mbody)
+    ensure_centroidal_dynamics(mbody, omega, alpha)
     q0 = np.asarray(q0, dtype=float)
     v0 = np.asarray(v0, dtype=float)
     t_eval = np.asarray(t_eval, dtype=float)

@@ -128,6 +128,32 @@ def gravity_forces(mbody, q, g=None):
     return Q_grav
 
 
+def quadratic_velocity_forces(mbody, q, v):
+    """Velocity-dependent inertial forces of bodies with an offset center of mass.
+
+    With reference point R and center of mass R + A(θ)·rG, Lagrange's
+    equations give the centripetal term ``m·θ̇²·A(θ)·rG`` on the translational
+    coordinates; the rotational entry is zero. The term vanishes when rG = 0.
+
+    Args:
+        mbody: MBody mechanism definition
+        q: coordinate vector
+        v: velocity vector
+
+    Returns:
+        Q_v: (ncoord,) generalized forces, added to the right-hand side
+    """
+    Q_v = np.zeros(mbody.ncoord)
+    for i in range(mbody.nb):
+        rG = mbody.bodies[i].rG
+        if not np.any(rG):
+            continue
+        Q_v[3 * i : 3 * i + 2] = (
+            mbody.bodies[i].mass * v[3 * i + 2] ** 2 * (rot_mat(q[3 * i + 2]) @ rG)
+        )
+    return Q_v
+
+
 class Spring:
     """A linear spring-damper element connecting two bodies.
 

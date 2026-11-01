@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -11,8 +12,10 @@ from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
-from ..errors import MechanismSolveError
-from .kinematics import joint_residual_jacobian
+from ..errors import MechanismSolveError, NotPortableError
+from ..reports import DEFAULT_MAX_STEPS, Check, CheckReport, Issue, ValidationReport, check_steps
+from ..planar.laws import MotionLaw, law_from_dict
+from .kinematics import joint_residual_jacobian, revolute_joint_angle, revolute_joint_axis_world
 from .dynamics import (
     SpatialDynamicsResult,
     SpatialForce,
@@ -39,14 +42,19 @@ from .coupled import (
 )
 from .constrained import (
     ConstrainedRigidBodyDynamicsResult,
+    _constraint_layout,
+    _generalized_jacobian,
     constrained_diagnostics,
     constrained_result_to_dict,
     constrained_result_to_json,
+    drive_efforts,
+    redundant_constraint_rows,
     simulate_constrained_rigid_bodies,
 )
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
+    ParallelAxesJoint3D,
     Pose3D,
     Quaternion,
     RevoluteJoint3D,
@@ -99,10 +107,15 @@ class SpatialCoordinateDrive:
     velocity: Callable[[float], float]
     acceleration: Callable[[float], float] | None = None
     name: str = "coordinate-drive"
+    law: MotionLaw | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("coordinate drive name must be non-empty")
+
+    @property
+    def portable(self) -> bool:
+        return self.law is not None
 
     def residual(self, poses: tuple[Pose3D, ...], t: float) -> float:
         axis = {"x": 0, "y": 1, "z": 2}[self.coordinate]
@@ -153,10 +166,20 @@ class SpatialCoordinateDrive:
         return analytic
 
     def as_dict(self) -> dict[str, Any]:
+        if self.law is not None:
+            return {
+                "kind": "coordinate_drive",
+                "body": self.body,
+                "coordinate": self.coordinate,
+                "law": self.law.to_dict(),
+                "portable": True,
+                "name": self.name,
+            }
         return {
             "kind": "coordinate_drive",
             "body": self.body,
             "coordinate": self.coordinate,
+            "portable": False,
             "value": getattr(self.value, "__name__", "callable"),
             "velocity": getattr(self.velocity, "__name__", "callable"),
             "acceleration": (
@@ -165,6 +188,62 @@ class SpatialCoordinateDrive:
                 else getattr(self.acceleration, "__name__", "callable")
             ),
             "name": self.name,
+        }
+
+
+@dataclass(frozen=True)
+class SpatialRevoluteDrive:
+    """Prescribed relative angle of a revolute joint about its free local Z.
+
+    The angle is the rotation of the joint's frame j relative to frame i.
+    ``law`` is a portable motion law; the drive torque is the effort reported
+    by ``drive_efforts``.
+    """
+
+    joint: str
+    law: MotionLaw
+    name: str = "revolute-drive"
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("revolute drive name must be non-empty")
+        if not isinstance(self.law, MotionLaw):
+            raise TypeError("law must be a MotionLaw such as ConstantSpeed or Tabulated")
+
+    portable = True
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "revolute_drive",
+            "joint": self.joint,
+            "law": self.law.to_dict(),
+            "portable": True,
+            "name": self.name,
+        }
+
+
+@dataclass(frozen=True)
+class ConsistentVelocities:
+    """Initial velocities that satisfy the velocity constraints.
+
+    Arrays have one row per body (the ground body included) in the
+    ``simulate()`` basis: center-of-mass world velocity and body-frame angular
+    velocity. Unprescribed components take the minimum-kinetic-energy
+    solution; ``unique`` is true when the constraints and prescriptions fix
+    every component.
+    """
+
+    linear_velocity: np.ndarray
+    angular_velocity_body: np.ndarray
+    unique: bool
+    max_residual: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "linear_velocity": self.linear_velocity.tolist(),
+            "angular_velocity_body": self.angular_velocity_body.tolist(),
+            "unique": self.unique,
+            "max_residual": self.max_residual,
         }
 
 
@@ -265,8 +344,11 @@ class SpatialMechanism:
     def __init__(self) -> None:
         self._bodies: list[SpatialBody] = []
         self._frames: list[Frame3D] = []
-        self._joints: list[SphericalJoint3D | FixedJoint3D | RevoluteJoint3D] = []
+        self._joints: list[
+            SphericalJoint3D | FixedJoint3D | RevoluteJoint3D | ParallelAxesJoint3D
+        ] = []
         self._drives: list[SpatialCoordinateDrive] = []
+        self._revolute_drives: list[SpatialRevoluteDrive] = []
         self._ground: int | None = None
 
     @property
@@ -290,6 +372,13 @@ class SpatialMechanism:
                 "free_body_rotational_dynamics": True,
                 "coupled_six_dof_rigid_body_dynamics": True,
                 "constrained_rotational_dynamics": True,
+                "dynamics_entry_point": "simulate",
+                "deprecated_entry_points": (
+                    "simulate_free_body",
+                    "simulate_coupled_rigid_bodies",
+                    "simulate_constrained_rigid_bodies",
+                ),
+                "restricted_entry_points": ("simulate_fixed_orientation",),
                 "solver_kinds": MappingProxyType(
                     {
                         "fixed_orientation": MappingProxyType(
@@ -307,6 +396,10 @@ class SpatialMechanism:
                     }
                 ),
                 "joint_types": ("spherical", "fixed", "revolute"),
+                "orientation_primitives": ("parallel_axes",),
+                "drive_kinds": ("coordinate_drive", "revolute_drive"),
+                "drive_coordinates": ("x", "y", "z"),
+                "redundant_constraints": "rejected_by_validate",
                 "velocity_frame": "world",
             }
         )
@@ -407,31 +500,102 @@ class SpatialMechanism:
         self._add_joint(joint)
         return joint
 
+    def parallel_axes(
+        self,
+        body_i: int | SpatialBodyHandle | None,
+        body_j: int | SpatialBodyHandle | None,
+        *,
+        frame_i: Pose3D | None = None,
+        frame_j: Pose3D | None = None,
+        name: str | None = None,
+    ) -> ParallelAxesJoint3D:
+        """Keep the local-Z axes of two frames parallel (2 rows, no translation).
+
+        Use it for a second bearing on a shaft that another joint already
+        locates; a second revolute there would add redundant rows.
+        """
+        joint = ParallelAxesJoint3D(
+            name or f"parallel-axes-{len(self._joints)}",
+            self._idx_optional(body_i), self._idx_optional(body_j),
+            Pose3D.identity() if frame_i is None else frame_i,
+            Pose3D.identity() if frame_j is None else frame_j,
+        )
+        self._add_joint(joint)
+        return joint
+
     def coordinate_drive(
         self,
         body: int | SpatialBodyHandle,
         coordinate: str,
         *,
-        value: Callable[[float], float],
-        velocity: Callable[[float], float],
+        value: Callable[[float], float] | None = None,
+        velocity: Callable[[float], float] | None = None,
         acceleration: Callable[[float], float] | None = None,
+        law: MotionLaw | None = None,
         name: str | None = None,
     ) -> SpatialCoordinateDrive:
+        """Prescribe a world translation coordinate of a body.
+
+        Pass a portable ``law`` (``ConstantSpeed``, ``Polynomial``,
+        ``Tabulated``) or ``value``/``velocity`` callables, which work in
+        Python but make the model non-portable.
+        """
         if coordinate not in {"x", "y", "z"}:
-            raise ValueError("coordinate must be one of: x, y, z")
+            raise MechanismSolveError(
+                f"Spatial coordinate drives prescribe x, y or z, not {coordinate!r}.",
+                code="unsupported_capability",
+                context={"coordinate": coordinate, "supported": ["x", "y", "z"]},
+                remediation="Drive rotation through revolute_drive(joint, law=...).",
+            )
+        if law is not None:
+            if not isinstance(law, MotionLaw):
+                raise TypeError("law must be a MotionLaw such as ConstantSpeed or Tabulated")
+            if any(fn is not None for fn in (value, velocity, acceleration)):
+                raise ValueError("pass either law or value/velocity/acceleration, not both")
+            value, velocity, acceleration = law.value, law.velocity, law.acceleration
         if not callable(value) or not callable(velocity):
             raise TypeError("value and velocity must be callable")
         if acceleration is not None and not callable(acceleration):
             raise TypeError("acceleration must be callable when supplied")
-        drive_name = name or f"drive-{len(self._drives)}"
-        if any(existing.name == drive_name for existing in self._drives):
-            raise ValueError(f"coordinate drive name {drive_name!r} is already in use")
+        drive_name = self._drive_name(name, f"drive-{len(self._drives)}")
         drive = SpatialCoordinateDrive(
             self._idx(body), coordinate, value, velocity, acceleration,
-            drive_name,
+            drive_name, law,
         )
         self._drives.append(drive)
         return drive
+
+    def revolute_drive(
+        self,
+        joint: RevoluteJoint3D | str,
+        *,
+        law: MotionLaw,
+        name: str | None = None,
+    ) -> SpatialRevoluteDrive:
+        """Prescribe the relative angle of a revolute joint with a portable law.
+
+        The angle is frame j relative to frame i about the hinge local Z, so
+        ``revolute(ground, shaft)`` driven by ``ConstantSpeed(rate=w)`` spins
+        the shaft at ``w`` rad/s about the hinge axis.
+        """
+        joint_name = joint.name if isinstance(joint, RevoluteJoint3D) else str(joint)
+        target = next((item for item in self._joints if item.name == joint_name), None)
+        if not isinstance(target, RevoluteJoint3D):
+            raise ValueError(f"revolute_drive needs a revolute joint of this mechanism, got {joint_name!r}")
+        drive = SpatialRevoluteDrive(
+            joint_name, law, self._drive_name(name, f"revolute-drive-{len(self._revolute_drives)}")
+        )
+        self._revolute_drives.append(drive)
+        return drive
+
+    def _drive_name(self, name: str | None, default: str) -> str:
+        drive_name = name or default
+        if any(existing.name == drive_name for existing in (*self._drives, *self._revolute_drives)):
+            raise ValueError(f"drive name {drive_name!r} is already in use")
+        return drive_name
+
+    def _joint_named(self, name: str):
+        return next(joint for joint in self._joints if joint.name == name)
 
     def solve_position(
         self,
@@ -550,6 +714,341 @@ class SpatialMechanism:
             capabilities=self.capabilities,
         )
 
+    def simulate(
+        self,
+        t: np.ndarray,
+        *,
+        poses0: Iterable[Pose3D] | None = None,
+        linear_velocity0: np.ndarray | Mapping | None = None,
+        angular_velocity0_body: np.ndarray | Mapping | None = None,
+        loads: Iterable[RigidBodyLoad] = (),
+        interactions: Iterable[RigidBodyPairInteraction] = (),
+        gravity_world: ArrayLike3 = (0.0, 0.0, 0.0),
+        inertia_tensors_body: np.ndarray | None = None,
+        stabilization_frequency: float = 0.0,
+        project_samples: bool = True,
+        constraint_tolerance: float = 1e-8,
+        method: str = "DOP853",
+        rtol: float = 1e-9,
+        atol: float = 1e-11,
+        max_steps: int = DEFAULT_MAX_STEPS,
+        max_evaluations: int | None = None,
+    ) -> ConstrainedRigidBodyDynamicsResult:
+        """Integrate six-DOF rigid-body dynamics for any joint set.
+
+        One entry point covers free bodies (no joints), bodies coupled by
+        ``pair_interaction`` forces, and jointed or driven mechanisms.
+        Initial velocities are center-of-mass world velocity and body-frame
+        angular velocity, as ``(nbody, 3)`` arrays (the ground body is a row
+        too) or dicts keyed by body name or handle; omitted bodies start at
+        rest. Use ``consistent_velocities`` to complete a partial
+        specification.
+        """
+        times = np.asarray(t, dtype=float)
+        check_steps(np.atleast_1d(times), max_steps)
+        return simulate_constrained_rigid_bodies(
+            self, times, poses0=poses0,
+            linear_velocity0=self._per_body(linear_velocity0, "linear_velocity0"),
+            angular_velocity0_body=self._per_body(angular_velocity0_body, "angular_velocity0_body"),
+            loads=loads, interactions=interactions, gravity_world=gravity_world,
+            inertia_tensors_body=inertia_tensors_body,
+            stabilization_frequency=stabilization_frequency, project_samples=project_samples,
+            constraint_tolerance=constraint_tolerance, method=method, rtol=rtol, atol=atol,
+            max_evaluations=max_evaluations,
+        )
+
+    def consistent_velocities(
+        self,
+        t: float = 0.0,
+        *,
+        poses: Iterable[Pose3D] | None = None,
+        linear_velocity: Mapping | np.ndarray | None = None,
+        angular_velocity_body: Mapping | np.ndarray | None = None,
+        inertia_tensors_body: np.ndarray | None = None,
+        tol: float = 1e-9,
+    ) -> ConsistentVelocities:
+        """Complete prescribed initial velocities so they satisfy the constraints.
+
+        Prescribe what you know (for example the input shaft's spin) by body
+        name; every other component is solved, choosing the
+        minimum-kinetic-energy motion when the constraints leave freedom.
+        Raises ``inconsistent_initial_state`` when the prescriptions conflict.
+        """
+        poses = self._initial_poses() if poses is None else self._validate_poses(poses)
+        t = _finite_scalar(t, "t")
+        if len(self.constraint_residual(poses, t)):
+            poses = self.solve_position(poses, t, tol=tol)
+        count = self.nbody
+        rows, targets = [], []
+        for offset, value, label in ((0, linear_velocity, "linear_velocity"), (3, angular_velocity_body, "angular_velocity_body")):
+            if value is None:
+                continue
+            for body, vector in self._prescribed(value, label):
+                for axis in range(3):
+                    row = np.zeros(6 * count)
+                    row[6 * body + offset + axis] = 1.0
+                    rows.append(row)
+                    targets.append(vector[axis])
+        jacobian = _generalized_jacobian(self, poses, t)
+        bias = -self.constraint_time_derivative(poses, t)
+        system = np.vstack([jacobian, *rows]) if rows else jacobian
+        rhs = np.concatenate((bias, np.asarray(targets, dtype=float)))
+        inertias = (
+            np.asarray([np.diag(body.inertia) for body in self._bodies])
+            if inertia_tensors_body is None else np.asarray(inertia_tensors_body, dtype=float)
+        )
+        weights = np.zeros(6 * count)
+        for index, body in enumerate(self._bodies):
+            weights[6 * index : 6 * index + 3] = body.mass
+            weights[6 * index + 3 : 6 * index + 6] = np.diag(inertias[index])
+        scale = 1.0 / np.sqrt(weights)
+        if system.shape[0]:
+            u = scale * (np.linalg.pinv(system * scale) @ rhs)
+            residual = _infinity_norm(system @ u - rhs)
+            rank = int(np.linalg.matrix_rank(system))
+        else:
+            u, residual, rank = np.zeros(6 * count), 0.0, 0
+        if residual > tol * max(1.0, _infinity_norm(rhs)):
+            raise MechanismSolveError(
+                f"Prescribed velocities conflict with the constraints (residual {residual:.3e}).",
+                code="inconsistent_initial_state",
+                context={"max_residual": residual},
+                remediation="Prescribe fewer components; constrained bodies follow from the drivers.",
+            )
+        blocks = u.reshape(count, 6)
+        return ConsistentVelocities(
+            _readonly_array(blocks[:, :3]), _readonly_array(blocks[:, 3:]),
+            rank == 6 * count, residual,
+        )
+
+    def drive_efforts(self, result: ConstrainedRigidBodyDynamicsResult) -> dict[str, dict[str, Any]]:
+        """Drive force (N) or torque (N*m) and power histories, keyed by drive name."""
+        constrained_diagnostics(self, result)
+        return {
+            item["name"]: {
+                "kind": item["kind"],
+                "effort": np.asarray(item["effort"]),
+                "power": np.asarray(item["power"]),
+                "effort_units": item["effort_units"],
+            }
+            for item in drive_efforts(self, result)
+        }
+
+    def redundant_constraints(
+        self, poses: Iterable[Pose3D] | None = None, t: float = 0.0
+    ) -> tuple[dict[str, Any], ...]:
+        """Constraint rows that repeat earlier rows (named by joint or drive)."""
+        poses = self._initial_poses() if poses is None else self._validate_poses(poses)
+        return tuple(redundant_constraint_rows(self, poses, t))
+
+    def constraint_layout(self, poses: Iterable[Pose3D] | None = None) -> tuple[dict[str, Any], ...]:
+        """Describe every constraint row: id, kind, name, component, bodies, units."""
+        poses = self._initial_poses() if poses is None else self._validate_poses(poses)
+        return tuple(_constraint_layout(self, poses))
+
+    def diagnostics(self, result):
+        """Residual and balance summary for any spatial result."""
+        if isinstance(result, ConstrainedRigidBodyDynamicsResult):
+            return constrained_diagnostics(self, result)
+        if isinstance(result, SpatialKinematicResult):
+            return self.result_diagnostics(result)
+        raise TypeError("result must come from simulate() or solve_kinematics()")
+
+    def validate(
+        self,
+        t: np.ndarray | float = 0.0,
+        *,
+        poses0: Iterable[Pose3D] | None = None,
+        linear_velocity0: np.ndarray | Mapping | None = None,
+        angular_velocity0_body: np.ndarray | Mapping | None = None,
+        max_steps: int = DEFAULT_MAX_STEPS,
+    ) -> ValidationReport:
+        """Check the model before ``simulate()`` and report structured issues.
+
+        Reports redundant constraints by joint name, free degrees of freedom,
+        inconsistent initial velocities, non-portable drives, tabulated laws
+        that do not cover ``t``, and resource limits. Nothing is integrated.
+        """
+        issues: list[Issue] = []
+        if not self._bodies:
+            issues.append(Issue("empty_model", "error", "Mechanism has no bodies.", "Add body() calls."))
+            return ValidationReport(False, True, None, None, tuple(issues))
+        times = np.atleast_1d(np.asarray(t, dtype=float))
+        if times.ndim != 1 or not np.all(np.isfinite(times)):
+            issues.append(Issue("invalid_input", "error", "t must be a finite scalar or 1-D grid.", None))
+            return ValidationReport(False, self.portable, None, None, tuple(issues))
+        t0, t1 = float(times[0]), float(times[-1])
+        classification, dof = "unconstrained", self.ncoord
+        poses = self._initial_poses() if poses0 is None else self._validate_poses(poses0)
+        constrained = len(self.constraint_residual(poses, t0)) > 0
+        try:
+            if constrained:
+                poses = self.solve_position(poses, t0)
+                diagnostics = self.model_diagnostics(poses, t0)
+                classification, dof = diagnostics.classification, diagnostics.degrees_of_freedom
+                redundant = redundant_constraint_rows(self, poses, t0)
+                if redundant:
+                    names = sorted({row["name"] for row in redundant})
+                    issues.append(Issue(
+                        "redundant_constraints", "error",
+                        f"{len(redundant)} constraint row(s) repeat earlier rows; redundant: "
+                        f"{', '.join(names)}. simulate() rejects redundant constraints.",
+                        "Replace a second bearing on an already located shaft with "
+                        "parallel_axes(...); otherwise remove the duplicated joint or drive.",
+                    ))
+                    classification = "redundant"
+                if dof > 0:
+                    issues.append(Issue(
+                        "underconstrained", "info",
+                        f"{dof} free degree(s) of freedom: suitable for simulate(), "
+                        "not for solve_kinematics().",
+                        "Add coordinate_drive or revolute_drive to prescribe free motion if needed.",
+                    ))
+        except Exception as exc:  # noqa: BLE001 - reported as structured data
+            issues.append(Issue(
+                "position_solve_failed", "error", f"Assembly failed at t={t0}: {exc}",
+                "Provide poses0 closer to an assembled configuration.",
+            ))
+        if constrained and (linear_velocity0 is not None or angular_velocity0_body is not None) and not any(
+            issue.severity == "error" for issue in issues
+        ):
+            linear = self._per_body(linear_velocity0, "linear_velocity0")
+            angular = self._per_body(angular_velocity0_body, "angular_velocity0_body")
+            u = np.concatenate((
+                np.zeros((self.nbody, 3)) if linear is None else np.asarray(linear, dtype=float),
+                np.zeros((self.nbody, 3)) if angular is None else np.asarray(angular, dtype=float),
+            ), axis=1).reshape(-1)
+            violation = _generalized_jacobian(self, poses, t0) @ u + self.constraint_time_derivative(poses, t0)
+            if _infinity_norm(violation) > 1e-8:
+                layout = _constraint_layout(self, poses)
+                names = sorted({layout[row]["name"] for row in np.flatnonzero(np.abs(violation) > 1e-8)})
+                issues.append(Issue(
+                    "inconsistent_initial_velocity", "error",
+                    f"Initial velocities violate {', '.join(names)} "
+                    f"(max residual {_infinity_norm(violation):.3e}).",
+                    "Prescribe the known velocities and call consistent_velocities(...) for the rest.",
+                ))
+        for drive in self._drives:
+            if not drive.portable:
+                issues.append(Issue(
+                    "opaque_drive", "warning",
+                    f"Drive {drive.name!r} uses Python callables and is not portable.",
+                    "Pass law=ConstantSpeed/Polynomial/Tabulated instead.",
+                ))
+        for drive in (*self._drives, *self._revolute_drives):
+            domain = getattr(drive.law, "domain", None)
+            if domain is not None and (t0 < domain[0] or t1 > domain[1]):
+                issues.append(Issue(
+                    "time_outside_table", "error",
+                    f"Drive {drive.name!r} is tabulated on {list(domain)} but t spans [{t0}, {t1}].",
+                    "Extend the table or shorten the time grid.",
+                ))
+        if len(times) > max_steps:
+            issues.append(Issue(
+                "resource_limit", "error",
+                f"{len(times)} time samples exceed max_steps={max_steps}.",
+                "Use fewer samples or pass max_steps explicitly.",
+            ))
+        ok = not any(issue.severity == "error" for issue in issues)
+        return ValidationReport(ok, self.portable, classification, dof, tuple(issues))
+
+    def check(
+        self,
+        result: ConstrainedRigidBodyDynamicsResult | SpatialKinematicResult,
+        *,
+        position_tol: float = 1e-7,
+        velocity_tol: float = 1e-6,
+        balance_tol: float = 1e-8,
+        energy_tol: float = 1e-6,
+    ) -> CheckReport:
+        """Return a pass/fail verdict on a ``simulate()`` or kinematic result.
+
+        Checks finiteness, position and velocity constraint residuals, and for
+        dynamics the per-body force and torque balance (relative to the
+        largest force or torque). Energy drift is checked when no drive, load
+        or interaction does work; otherwise it is skipped with a note.
+        """
+        if isinstance(result, SpatialKinematicResult):
+            diagnostics = self.result_diagnostics(result)
+            checks = [
+                Check("finite", None, None, diagnostics.finite),
+                Check("position_residual", diagnostics.max_position_residual, position_tol,
+                      diagnostics.max_position_residual <= position_tol),
+                Check("velocity_residual", diagnostics.max_velocity_residual, velocity_tol,
+                      diagnostics.max_velocity_residual <= velocity_tol),
+            ]
+            return CheckReport(all(item.passed is not False for item in checks), "spatial_kinematic", tuple(checks))
+        diagnostics = constrained_diagnostics(self, result)
+        force_scale = max(1.0, _infinity_norm(result.applied_force_world), _infinity_norm(result.reaction_force_world))
+        torque_scale = max(1.0, _infinity_norm(result.applied_torque_body), _infinity_norm(result.reaction_torque_body))
+        force_balance = diagnostics.max_force_balance_residual / force_scale
+        torque_balance = diagnostics.max_torque_balance_residual / torque_scale
+        checks = [
+            Check("finite", None, None, diagnostics.finite),
+            Check("position_residual", diagnostics.max_position_residual, position_tol,
+                  diagnostics.max_position_residual <= position_tol),
+            Check("velocity_residual", diagnostics.max_velocity_residual, velocity_tol,
+                  diagnostics.max_velocity_residual <= velocity_tol),
+            Check("force_balance", force_balance, balance_tol, force_balance <= balance_tol),
+            Check("torque_balance", torque_balance, balance_tol, torque_balance <= balance_tol),
+        ]
+        provenance = result.provenance
+        if self._drives or self._revolute_drives:
+            reason = "skipped: drives do work on the system"
+        elif provenance.get("load_descriptors") or provenance.get("interaction_descriptors"):
+            reason = "skipped: applied loads and interactions are not treated as potentials"
+        else:
+            reason = None
+        if reason:
+            checks.append(Check("energy_drift", None, energy_tol, None, reason))
+        else:
+            gravity = np.asarray(provenance.get("gravity_world", (0.0, 0.0, 0.0)), dtype=float)
+            masses = np.asarray([body.mass for body in self._bodies])
+            kinetic = 0.5 * np.einsum("b,tbi,tbi->t", masses, result.linear_velocity, result.linear_velocity)
+            kinetic += 0.5 * np.einsum(
+                "tbi,bij,tbj->t", result.angular_velocity_body, result.inertia_tensor_body,
+                result.angular_velocity_body,
+            )
+            potential = -np.einsum("b,tbi,i->t", masses, result.center_of_mass_position, gravity)
+            energy = kinetic + potential
+            drift = float(np.max(np.abs(energy - energy[0]))) / max(1.0, _infinity_norm(energy))
+            checks.append(Check("energy_drift", drift, energy_tol, drift <= energy_tol))
+        return CheckReport(all(item.passed is not False for item in checks), "spatial_dynamic", tuple(checks))
+
+    def _per_body(self, value, name: str):
+        if value is None or not isinstance(value, Mapping):
+            if value is not None:
+                array = np.asarray(value, dtype=float)
+                if array.shape != (self.nbody, 3):
+                    ground = "" if self._ground is None else f", including the ground body at index {self._ground}"
+                    raise ValueError(
+                        f"{name} must have shape ({self.nbody}, 3): one row per body{ground}; "
+                        f"got {array.shape}. A dict keyed by body name is also accepted."
+                    )
+            return value
+        array = np.zeros((self.nbody, 3))
+        for body, vector in self._prescribed(value, name):
+            array[body] = vector
+        return array
+
+    def _prescribed(self, value, name: str):
+        if isinstance(value, Mapping):
+            items = []
+            for key, vector in value.items():
+                if isinstance(key, str):
+                    matches = [index for index, body in enumerate(self._bodies) if body.name == key]
+                    if not matches:
+                        raise ValueError(f"{name}: unknown body {key!r}")
+                    index = matches[0]
+                else:
+                    index = self._idx(key)
+                items.append((index, _vector3(vector, f"{name}[{key!r}]")))
+            return items
+        array = np.asarray(value, dtype=float)
+        if array.shape != (self.nbody, 3) or not np.all(np.isfinite(array)):
+            raise ValueError(f"{name} must have finite shape ({self.nbody}, 3) or be a dict keyed by body name")
+        return list(enumerate(array))
+
     def force(
         self,
         body: int | SpatialBodyHandle,
@@ -642,7 +1141,11 @@ class SpatialMechanism:
         rtol: float = 1e-10,
         atol: float = 1e-12,
     ) -> SpatialRigidBodyDynamicsResult:
-        """Integrate one unconstrained body with translation and rotation."""
+        """Integrate one unconstrained body with translation and rotation.
+
+        Deprecated: use ``simulate()``, which handles bodies without joints.
+        """
+        _deprecated("simulate_free_body")
         return simulate_free_body(
             self, t, linear_velocity0=linear_velocity0,
             angular_velocity0_body=angular_velocity0_body, loads=loads,
@@ -676,6 +1179,8 @@ class SpatialMechanism:
         gravity_world=(0.0, 0.0, 0.0), inertia_tensors_body=None,
         method: str = "DOP853", rtol: float = 1e-10, atol: float = 1e-12,
     ) -> CoupledRigidBodyDynamicsResult:
+        """Deprecated: use ``simulate(interactions=...)``."""
+        _deprecated("simulate_coupled_rigid_bodies")
         return simulate_coupled_rigid_bodies(
             self, t, linear_velocity0=linear_velocity0,
             angular_velocity0_body=angular_velocity0_body, loads=loads,
@@ -696,6 +1201,8 @@ class SpatialMechanism:
     def simulate_constrained_rigid_bodies(
         self, t: np.ndarray, **options,
     ) -> ConstrainedRigidBodyDynamicsResult:
+        """Deprecated alias of ``simulate()``."""
+        _deprecated("simulate_constrained_rigid_bodies")
         return simulate_constrained_rigid_bodies(self, t, **options)
 
     def constrained_diagnostics(self, result: ConstrainedRigidBodyDynamicsResult):
@@ -720,6 +1227,10 @@ class SpatialMechanism:
             values.extend(joint.residual(poses))
         for drive in self._drives:
             values.append(drive.residual(poses, t))
+        for drive in self._revolute_drives:
+            angle = revolute_joint_angle(self._joint_named(drive.joint), poses)
+            error = angle - float(drive.law.value(t))
+            values.append(float(np.arctan2(np.sin(error), np.cos(error))))
         return np.asarray(values, dtype=float)
 
     def constraint_jacobian(
@@ -738,6 +1249,15 @@ class SpatialMechanism:
             axis = {"x": 0, "y": 1, "z": 2}[drive.coordinate]
             row[0, 6 * drive.body + axis] = 1.0
             rows.append(row)
+        for drive in self._revolute_drives:
+            joint = self._joint_named(drive.joint)
+            axis = revolute_joint_axis_world(joint, poses)
+            row = np.zeros((1, self.ncoord))
+            if joint.body_j is not None:
+                row[0, 6 * joint.body_j + 3 : 6 * joint.body_j + 6] += axis
+            if joint.body_i is not None:
+                row[0, 6 * joint.body_i + 3 : 6 * joint.body_i + 6] -= axis
+            rows.append(row)
         return np.vstack(rows) if rows else np.zeros((0, self.ncoord))
 
     def constraint_time_derivative(
@@ -750,6 +1270,9 @@ class SpatialMechanism:
         )
         for index, drive in enumerate(self._drives):
             values[offset + index] = -_finite_scalar(drive.velocity(t), "drive velocity")
+        offset += len(self._drives)
+        for index, drive in enumerate(self._revolute_drives):
+            values[offset + index] = -_finite_scalar(drive.law.velocity(t), "drive velocity")
         return values
 
     def constraint_second_time_derivative(
@@ -763,6 +1286,9 @@ class SpatialMechanism:
         )
         for index, drive in enumerate(self._drives):
             values[offset + index] = -drive.acceleration_value(t)
+        offset += len(self._drives)
+        for index, drive in enumerate(self._revolute_drives):
+            values[offset + index] = -_finite_scalar(drive.law.acceleration(t), "drive acceleration")
         return values
 
     def model_diagnostics(
@@ -832,12 +1358,16 @@ class SpatialMechanism:
         if self._ground is not None:
             layout.extend(["translation"] * 3 + ["rotation"] * 3)
         for joint in self._joints:
+            if isinstance(joint, ParallelAxesJoint3D):
+                layout.extend(["rotation"] * 2)
+                continue
             layout.extend(["translation"] * 3)
             if isinstance(joint, FixedJoint3D):
                 layout.extend(["rotation"] * 3)
             elif isinstance(joint, RevoluteJoint3D):
                 layout.extend(["rotation"] * 2)
         layout.extend(["translation"] * len(self._drives))
+        layout.extend(["rotation"] * len(self._revolute_drives))
         return layout
 
     def to_spatial_model(self) -> SpatialModel:
@@ -849,16 +1379,27 @@ class SpatialMechanism:
                 "builder": "Mechanism.spatial",
                 "ground_body": self._ground,
                 "drives": [drive.as_dict() for drive in self._drives],
+                "revolute_drives": [drive.as_dict() for drive in self._revolute_drives],
+                "portable": self.portable,
             },
         )
 
+    @property
+    def portable(self) -> bool:
+        """True when every drive is a portable law (no Python callbacks)."""
+        return all(drive.portable for drive in self._drives)
+
     @classmethod
     def from_spatial_model(cls, model: SpatialModel) -> "SpatialMechanism":
+        """Rebuild a mechanism, including drives described by portable laws."""
         if not isinstance(model, SpatialModel):
             raise TypeError("model must be a SpatialModel")
-        if model.metadata.get("drives"):
-            raise ValueError(
-                "portable coordinate-drive descriptors cannot reconstruct Python callbacks"
+        drives = list(model.metadata.get("drives") or ())
+        if any("law" not in drive for drive in drives):
+            raise NotPortableError(
+                "portable coordinate-drive descriptors cannot reconstruct Python callbacks",
+                context={"drives": [drive.get("name") for drive in drives if "law" not in drive]},
+                remediation="Build drives with coordinate_drive(..., law=...) to make them portable.",
             )
         mechanism = cls()
         mechanism._bodies = list(model.bodies)
@@ -866,7 +1407,37 @@ class SpatialMechanism:
         mechanism._joints = list(model.joints)
         ground = model.metadata.get("ground_body")
         mechanism._ground = None if ground is None else int(ground)
+        for drive in drives:
+            mechanism.coordinate_drive(
+                int(drive["body"]), drive["coordinate"],
+                law=law_from_dict(_json_ready(drive["law"])), name=drive["name"],
+            )
+        for drive in model.metadata.get("revolute_drives") or ():
+            mechanism.revolute_drive(
+                drive["joint"], law=law_from_dict(_json_ready(drive["law"])), name=drive["name"]
+            )
         return mechanism
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "SpatialMechanism":
+        """Rebuild a mechanism from ``to_dict()`` or a spatial-model payload."""
+        from .vocabulary import spatial_model_from_payload
+
+        if not isinstance(payload, Mapping):
+            raise TypeError("spatial mechanism payload must be a mapping")
+        model_payload = {
+            key: value for key, value in payload.items()
+            if key not in {"model_id", "model_id_scope", "solver_capabilities"}
+        }
+        mechanism = cls.from_spatial_model(spatial_model_from_payload(model_payload))
+        expected = payload.get("model_id")
+        if expected is not None and expected != mechanism.model_id():
+            raise ValueError("payload model_id does not match the rebuilt mechanism")
+        return mechanism
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> "SpatialMechanism":
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
     def model_id(self) -> str:
         payload = self.to_spatial_model().as_dict()
@@ -874,6 +1445,8 @@ class SpatialMechanism:
         metadata = payload.get("metadata", {})
         if isinstance(metadata, dict):
             metadata.pop("drives", None)
+            metadata.pop("revolute_drives", None)
+            metadata.pop("portable", None)
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()[:16]
 
@@ -899,6 +1472,15 @@ class SpatialMechanism:
                 for drive in self._drives
             ],
         }
+        if self._revolute_drives:
+            payload["revolute_drives"] = [
+                {
+                    "joint": drive.joint,
+                    "value": [_finite_scalar(drive.law.value(float(t)), "drive value") for t in sampled_times],
+                    "velocity": [_finite_scalar(drive.law.velocity(float(t)), "drive velocity") for t in sampled_times],
+                }
+                for drive in self._revolute_drives
+            ]
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()[:16]
 
@@ -906,7 +1488,7 @@ class SpatialMechanism:
         payload = self.to_spatial_model().as_dict()
         payload["model_id"] = self.model_id()
         payload["model_id_scope"] = "structure_excluding_runtime_drive_callbacks"
-        payload["capabilities"] = _json_ready(self.capabilities)
+        payload["solver_capabilities"] = _json_ready(self.capabilities)
         return payload
 
     def result_to_dict(self, result: SpatialKinematicResult) -> dict[str, Any]:
@@ -963,7 +1545,7 @@ class SpatialMechanism:
         return _write_json(self.result_to_dict(result), path, indent)
 
     def _add_joint(
-        self, joint: SphericalJoint3D | FixedJoint3D | RevoluteJoint3D
+        self, joint: SphericalJoint3D | FixedJoint3D | RevoluteJoint3D | ParallelAxesJoint3D
     ) -> None:
         if any(existing.name == joint.name for existing in self._joints):
             raise ValueError(f"joint name {joint.name!r} is already in use")
@@ -1438,6 +2020,21 @@ def _adaptive_derivative(
     scale = max(1.0, abs(numeric))
     converged = uncertainty <= max(DRIVE_DERIVATIVE_ATOL, DRIVE_DERIVATIVE_RTOL * scale)
     return float(numeric), float(uncertainty), bool(converged)
+
+
+def _deprecated(name: str) -> None:
+    warnings.warn(
+        f"SpatialMechanism.{name}() is deprecated and will be removed in 1.0; use simulate().",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+def _vector3(value: Any, name: str) -> np.ndarray:
+    array = np.asarray(value, dtype=float)
+    if array.shape != (3,) or not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} must be a finite 3-vector")
+    return array
 
 
 def _readonly_array(value: Any) -> np.ndarray:

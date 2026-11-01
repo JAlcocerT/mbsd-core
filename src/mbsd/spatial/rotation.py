@@ -144,7 +144,7 @@ def simulate_free_body(
     atol: float = 1e-12,
 ) -> SpatialRigidBodyDynamicsResult:
     """Integrate one unconstrained rigid body using body-frame Euler equations."""
-    if mechanism.nbody != 1 or mechanism._ground is not None or mechanism._joints or mechanism._drives:
+    if mechanism.nbody != 1 or mechanism._ground is not None or mechanism._joints or mechanism._drives or mechanism._revolute_drives:
         raise MechanismSolveError("free-body dynamics requires exactly one body and no ground, joints, or drives")
     times = np.asarray(t, dtype=float)
     if times.ndim != 1 or len(times) < 2 or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0):

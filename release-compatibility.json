@@ -1,12 +1,12 @@
 {
-  "release": "0.9.6",
-  "core_ref": "v0.9.6",
-  "examples_ref": "v0.9.6",
-  "examples_core_range": ">=0.9.6,<0.10",
+  "release": "0.9.7",
+  "core_ref": "v0.9.7",
+  "examples_ref": "v0.9.7",
+  "examples_core_range": ">=0.9.7,<0.10",
   "schemas": {
     "mbsd.planar.mechanism": {
-      "emitted": 1,
-      "readable": [1],
+      "emitted": 2,
+      "readable": [1, 2],
       "validation": "structural_and_portability",
       "importable": true
     },
@@ -17,7 +17,7 @@
       "emitted": 1
     },
     "mbsd.planar.joint_loads": {
-      "emitted": 1,
+      "emitted": 2,
       "validation": "json_schema"
     },
     "mbsd.operations": {
@@ -27,13 +27,15 @@
       "emitted": 1
     },
     "mbsd.spatial.model": {
-      "emitted": 3,
-      "readable": [1, 2, 3],
+      "emitted": 4,
+      "readable": [1, 2, 3, 4],
       "validation": {
         "1": "header_only",
         "2": "structural_and_semantic",
-        "3": "structural_and_semantic"
-      }
+        "3": "structural_and_semantic",
+        "4": "structural_and_semantic"
+      },
+      "importable": true
     },
     "mbsd.spatial.kinematic_result": {
       "emitted": 1,
@@ -50,19 +52,22 @@
       "emitted": 1,
       "readable": [1],
       "validation": "structural_and_semantic",
-      "capability": "unconstrained_free_rigid_body_dynamics"
+      "capability": "unconstrained_free_rigid_body_dynamics",
+      "status": "deprecated_entry_point"
     },
     "mbsd.spatial.coupled_rigid_body_dynamic_result": {
       "emitted": 2,
       "readable": [2],
       "validation": "structural_and_semantic",
-      "capability": "unconstrained_coupled_six_dof_rigid_body_dynamics"
+      "capability": "unconstrained_coupled_six_dof_rigid_body_dynamics",
+      "status": "deprecated_entry_point"
     },
     "mbsd.spatial.constrained_rigid_body_dynamic_result": {
-      "emitted": 2,
-      "readable": [1, 2],
+      "emitted": 3,
+      "readable": [1, 2, 3],
       "validation": "structural_and_semantic",
-      "capability": "constrained_spatial_rigid_body_dynamics"
+      "capability": "constrained_spatial_rigid_body_dynamics",
+      "producer": "SpatialMechanism.simulate"
     },
     "mbsd.interop.transform_tracks": {
       "emitted": 1,

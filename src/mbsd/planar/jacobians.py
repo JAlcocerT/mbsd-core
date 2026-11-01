@@ -12,6 +12,26 @@ import numpy as np
 from .kinematics import rot_mat, rot_mat_d
 
 
+_PERP = np.array([[0.0, -1.0], [1.0, 0.0]])
+
+
+def jac_punto_linea(joint, qi, qj):
+    """Jacobian of the point-on-line constraint (6,): [dC/dqi, dC/dqj].
+
+    C = n · d with n = Aj·perp(hi) the line normal and
+    d = Ri + Ai·ri - Rj - Aj·rj.
+    """
+    Ai, Aj = rot_mat(qi[2]), rot_mat(qj[2])
+    normal = Aj @ (_PERP @ joint.hi)
+    rel_pos = qi[:2] + Ai @ joint.ri - qj[:2] - Aj @ joint.rj
+    row = np.zeros(6)
+    row[:2] = normal
+    row[2] = normal @ (rot_mat_d(qi[2]) @ joint.ri)
+    row[3:5] = -normal
+    row[5] = (_PERP @ normal) @ rel_pos - normal @ (rot_mat_d(qj[2]) @ joint.rj)
+    return row
+
+
 def jac_rotula(joint, qi, qj):
     """Jacobian of revolute joint constraint (2x6).
 
@@ -125,14 +145,13 @@ def jacobian(mbody, q, t):
             Cq[row:row + 3, col] = (C_pert[row:row + 3] - C_base[row:row + 3]) / h
         row += 3
 
-    # Point-on-Line joints - use finite differences
+    # Point-on-Line joints - analytic
     for joint in mbody.punto_linea_joints:
-        C_base = constraints(mbody, q, t)
-        for col in range(ncoord):
-            q_pert = q.copy()
-            q_pert[col] += h
-            C_pert = constraints(mbody, q_pert, t)
-            Cq[row, col] = (C_pert[row] - C_base[row]) / h
+        Cpl = jac_punto_linea(joint, mbody.get_qi(q, joint.i), mbody.get_qi(q, joint.j))
+        ci = 3 * joint.i
+        cj = 3 * joint.j
+        Cq[row, ci:ci + 3] += Cpl[:3]
+        Cq[row, cj:cj + 3] += Cpl[3:]
         row += 1
 
     # Gear joints - use finite differences

@@ -55,6 +55,7 @@ class PuntoLineaJoint:
     ri: np.ndarray
     rj: np.ndarray
     hi: np.ndarray
+    name: str = ""
 
 
 @dataclass

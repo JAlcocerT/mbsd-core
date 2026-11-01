@@ -1,25 +1,31 @@
 {
   "error_codes": {
+    "inconsistent_initial_state": "Initial velocities violate the constraints; context names them.",
     "integration_failed": "The time integrator reported failure.",
+    "invalid_input": "An argument is malformed, non-finite, or out of range.",
     "missing_multipliers": "The result carries no Lagrange multipliers (kinematic result).",
     "not_kinematically_driven": "Inverse dynamics needs drives for every degree of freedom.",
     "not_portable": "A Python callback cannot be serialized or imported.",
+    "rank_deficient": "Constraints are redundant or singular; context names the rows and joints.",
     "resource_limit": "max_steps or max_evaluations was exceeded.",
     "schema_mismatch": "The payload is not the expected schema family.",
     "solve_failed": "Generic singular, inconsistent, or divergent solve.",
+    "unsupported_capability": "The request needs a capability this release does not provide.",
     "unsupported_schema_version": "The payload schema version cannot be read."
   },
   "operations": [
     {
       "call": "mbsd.capabilities()",
+      "dimension": null,
       "errors": [],
       "inputs": {},
       "name": "capabilities",
       "returns": "dict",
-      "summary": "Static description of supported dimensions, joints, solvers and limits."
+      "summary": "Static description of supported dimensions, joints, drives, solvers and limits."
     },
     {
       "call": "PlanarMechanism.from_json(path)",
+      "dimension": 2,
       "errors": [
         "schema_mismatch",
         "unsupported_schema_version",
@@ -34,6 +40,7 @@
     },
     {
       "call": "mechanism.validate(q0=None, t=0.0)",
+      "dimension": 2,
       "errors": [],
       "inputs": {
         "q0": "list[float] | None",
@@ -45,6 +52,7 @@
     },
     {
       "call": "mechanism.solve_kinematics(t, q0=None, max_steps=100000)",
+      "dimension": 2,
       "errors": [
         "solve_failed",
         "resource_limit"
@@ -60,6 +68,7 @@
     },
     {
       "call": "mechanism.simulate(t, q0, v0=None, max_steps=100000, max_evaluations=None)",
+      "dimension": 2,
       "errors": [
         "solve_failed",
         "integration_failed",
@@ -74,11 +83,62 @@
         "v0": "list[float] | None"
       },
       "name": "simulate",
+      "options": [
+        {
+          "default": "RK45",
+          "enum": [
+            "RK45",
+            "RK23",
+            "DOP853",
+            "Radau",
+            "BDF",
+            "LSODA"
+          ],
+          "meaning": "SciPy solve_ivp integrator.",
+          "name": "method",
+          "type": "str"
+        },
+        {
+          "default": 1e-09,
+          "meaning": "Relative integration tolerance.",
+          "minimum": 0.0,
+          "name": "rtol",
+          "type": "float"
+        },
+        {
+          "default": 1e-11,
+          "meaning": "Absolute integration tolerance.",
+          "minimum": 0.0,
+          "name": "atol",
+          "type": "float"
+        },
+        {
+          "default": false,
+          "meaning": "Accept free degrees of freedom (needed for unforced dynamics).",
+          "name": "allow_underconstrained",
+          "type": "bool"
+        },
+        {
+          "default": 100000,
+          "meaning": "Largest accepted number of output samples.",
+          "minimum": 1,
+          "name": "max_steps",
+          "type": "int"
+        },
+        {
+          "default": null,
+          "meaning": "Cap on right-hand-side evaluations; None means no cap.",
+          "minimum": 1,
+          "name": "max_evaluations",
+          "type": "int | None"
+        }
+      ],
       "returns": "DynamicsResult",
       "summary": "Forward constrained dynamics; the result carries sampled multipliers."
     },
     {
       "call": "mechanism.inverse_dynamics(t, q0=None, max_steps=100000)",
+      "dimension": 2,
       "errors": [
         "not_kinematically_driven",
         "solve_failed",
@@ -95,6 +155,7 @@
     },
     {
       "call": "mechanism.joint_loads(result)",
+      "dimension": 2,
       "errors": [
         "missing_multipliers"
       ],
@@ -103,10 +164,11 @@
       },
       "name": "joint_loads",
       "returns": "JointLoads",
-      "summary": "Named joint reactions, drive efforts and the frame (shaking) load."
+      "summary": "Named joint reactions, drive efforts (incl. linear actuators) and the frame load."
     },
     {
       "call": "mechanism.check(result)",
+      "dimension": 2,
       "errors": [],
       "inputs": {
         "result": "KinematicResult | DynamicsResult | InverseDynamicsResult"
@@ -117,16 +179,18 @@
     },
     {
       "call": "mechanism.to_json(path)",
+      "dimension": 2,
       "errors": [],
       "inputs": {
         "path": "str"
       },
       "name": "export_model",
       "returns": "path",
-      "summary": "Write the portable mechanism payload (mbsd.planar.mechanism v1)."
+      "summary": "Write the portable mechanism payload (mbsd.planar.mechanism v2)."
     },
     {
       "call": "mechanism.result_to_json(result, path)",
+      "dimension": 2,
       "errors": [],
       "inputs": {
         "path": "str",
@@ -138,6 +202,7 @@
     },
     {
       "call": "mechanism.joint_loads_to_json(result, path)",
+      "dimension": 2,
       "errors": [
         "missing_multipliers"
       ],
@@ -147,7 +212,199 @@
       },
       "name": "export_joint_loads",
       "returns": "path",
-      "summary": "Write the joint-load history payload (mbsd.planar.joint_loads v1)."
+      "summary": "Write the joint-load history payload (mbsd.planar.joint_loads v2)."
+    },
+    {
+      "call": "SpatialMechanism.from_json(path)",
+      "dimension": 3,
+      "errors": [
+        "not_portable"
+      ],
+      "inputs": {
+        "path": "str"
+      },
+      "name": "spatial_load",
+      "returns": "SpatialMechanism",
+      "summary": "Rebuild a spatial mechanism, including law-described drives, from mbsd.spatial.model."
+    },
+    {
+      "call": "spatial_mechanism.validate(t=0.0, poses0=None, linear_velocity0=None, angular_velocity0_body=None)",
+      "dimension": 3,
+      "errors": [],
+      "inputs": {
+        "angular_velocity0_body": "dict[body, vec3] | list[vec3] | None",
+        "linear_velocity0": "dict[body, vec3] | list[vec3] | None",
+        "t": "float | list[float]"
+      },
+      "name": "spatial_validate",
+      "returns": "ValidationReport",
+      "summary": "Pre-solve report: redundant constraints by joint name, DOF, initial-velocity consistency, portability, table domains, resource limits."
+    },
+    {
+      "call": "spatial_mechanism.consistent_velocities(t=0.0, linear_velocity=None, angular_velocity_body=None)",
+      "dimension": 3,
+      "errors": [
+        "inconsistent_initial_state"
+      ],
+      "inputs": {
+        "angular_velocity_body": "dict[body, vec3] | None",
+        "linear_velocity": "dict[body, vec3] | None",
+        "t": "float"
+      },
+      "name": "spatial_consistent_velocities",
+      "returns": "ConsistentVelocities",
+      "summary": "Complete partially prescribed initial velocities (minimum kinetic energy)."
+    },
+    {
+      "call": "spatial_mechanism.solve_kinematics(t, poses=None)",
+      "dimension": 3,
+      "errors": [
+        "solve_failed"
+      ],
+      "inputs": {
+        "t": "list[float]"
+      },
+      "name": "spatial_solve_kinematics",
+      "returns": "SpatialKinematicResult",
+      "summary": "Poses and velocities of a fully driven spatial mechanism."
+    },
+    {
+      "call": "spatial_mechanism.simulate(t, linear_velocity0=None, angular_velocity0_body=None, loads=(), interactions=(), gravity_world=(0, 0, 0))",
+      "dimension": 3,
+      "errors": [
+        "invalid_input",
+        "rank_deficient",
+        "inconsistent_initial_state",
+        "solve_failed",
+        "resource_limit"
+      ],
+      "inputs": {
+        "angular_velocity0_body": "dict[body, vec3] | list[vec3] | None",
+        "linear_velocity0": "dict[body, vec3] | list[vec3] | None",
+        "t": "list[float]"
+      },
+      "name": "spatial_simulate",
+      "options": [
+        {
+          "default": "DOP853",
+          "enum": [
+            "RK45",
+            "DOP853",
+            "Radau"
+          ],
+          "meaning": "SciPy solve_ivp integrator.",
+          "name": "method",
+          "type": "str"
+        },
+        {
+          "default": 1e-09,
+          "meaning": "Relative integration tolerance.",
+          "minimum": 0.0,
+          "name": "rtol",
+          "type": "float"
+        },
+        {
+          "default": 1e-11,
+          "meaning": "Absolute integration tolerance.",
+          "minimum": 0.0,
+          "name": "atol",
+          "type": "float"
+        },
+        {
+          "default": 1e-08,
+          "meaning": "Position and velocity projection tolerance; tighten it for drive-angle accuracy.",
+          "minimum": 0.0,
+          "name": "constraint_tolerance",
+          "type": "float",
+          "units": "m or rad"
+        },
+        {
+          "default": 0.0,
+          "meaning": "Baumgarte-style constraint stabilization frequency; 0 disables it.",
+          "minimum": 0.0,
+          "name": "stabilization_frequency",
+          "type": "float",
+          "units": "rad/s"
+        },
+        {
+          "default": true,
+          "meaning": "Project every output sample back onto the position and velocity constraints.",
+          "name": "project_samples",
+          "type": "bool"
+        },
+        {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "meaning": "Gravity vector.",
+          "name": "gravity_world",
+          "type": "list[float]",
+          "units": "m/s^2"
+        },
+        {
+          "default": 100000,
+          "meaning": "Largest accepted number of output samples.",
+          "minimum": 1,
+          "name": "max_steps",
+          "type": "int"
+        },
+        {
+          "default": null,
+          "meaning": "Cap on right-hand-side evaluations; None means no cap.",
+          "minimum": 1,
+          "name": "max_evaluations",
+          "type": "int | None"
+        }
+      ],
+      "returns": "ConstrainedRigidBodyDynamicsResult",
+      "summary": "Six-DOF rigid-body dynamics for free, coupled, jointed and driven bodies."
+    },
+    {
+      "call": "spatial_mechanism.drive_efforts(result)",
+      "dimension": 3,
+      "errors": [],
+      "inputs": {
+        "result": "ConstrainedRigidBodyDynamicsResult"
+      },
+      "name": "spatial_drive_efforts",
+      "returns": "dict",
+      "summary": "Per-drive force or torque and power histories."
+    },
+    {
+      "call": "spatial_mechanism.check(result)",
+      "dimension": 3,
+      "errors": [],
+      "inputs": {
+        "result": "ConstrainedRigidBodyDynamicsResult | SpatialKinematicResult"
+      },
+      "name": "spatial_check",
+      "returns": "CheckReport",
+      "summary": "Pass/fail verdict: residuals, force and torque balance, energy drift."
+    },
+    {
+      "call": "spatial_mechanism.to_json(path)",
+      "dimension": 3,
+      "errors": [],
+      "inputs": {
+        "path": "str"
+      },
+      "name": "spatial_export_model",
+      "returns": "path",
+      "summary": "Write the spatial model payload (mbsd.spatial.model v4)."
+    },
+    {
+      "call": "spatial_mechanism.constrained_result_to_json(result, path)",
+      "dimension": 3,
+      "errors": [],
+      "inputs": {
+        "path": "str",
+        "result": "ConstrainedRigidBodyDynamicsResult"
+      },
+      "name": "spatial_export_result",
+      "returns": "path",
+      "summary": "Write the dynamics payload (mbsd.spatial.constrained_rigid_body_dynamic_result v3)."
     }
   ],
   "safety": {
@@ -159,14 +416,16 @@
   "schema_version": 1,
   "validation_codes": {
     "empty_model": "error",
+    "inconsistent_initial_velocity": "error",
+    "invalid_input": "error",
     "low_level_joint": "warning",
-    "offset_center_of_mass": "error",
     "opaque_constraint": "warning",
     "opaque_drive": "warning",
     "opaque_load": "warning",
     "overconstrained": "error",
     "position_solve_failed": "error",
     "rank_deficient": "error",
+    "redundant_constraints": "error",
     "resource_limit": "error",
     "time_outside_table": "error",
     "underconstrained": "info"

@@ -185,6 +185,15 @@ def simulate_fixed_orientation(
         if force.body >= mechanism.nbody:
             raise IndexError(f"force body index {force.body} is out of range")
 
+    from .vocabulary import ParallelAxesJoint3D
+
+    if mechanism._revolute_drives or any(isinstance(joint, ParallelAxesJoint3D) for joint in mechanism._joints):
+        raise MechanismSolveError(
+            "Fixed-orientation dynamics supports translation constraints only; "
+            "parallel_axes joints and revolute drives need simulate().",
+            code="unsupported_capability",
+            remediation="Use SpatialMechanism.simulate().",
+        )
     if any(np.linalg.norm(body.center_of_mass, ord=np.inf) > 0.0 for body in mechanism._bodies):
         raise MechanismSolveError(
             "Fixed-orientation dynamics requires every body reference point to "

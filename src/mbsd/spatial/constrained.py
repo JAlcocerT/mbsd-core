@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 
 
 CONSTRAINED_RESULT_SCHEMA = "mbsd.spatial.constrained_rigid_body_dynamic_result"
-CONSTRAINED_RESULT_SCHEMA_VERSION = 2
+CONSTRAINED_RESULT_SCHEMA_VERSION = 3
+SUPPORTED_CONSTRAINED_RESULT_SCHEMA_VERSIONS = (1, 2, 3)
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,11 @@ def constrained_capabilities() -> Mapping[str, Any]:
         "translation_dynamics": True, "orientation_dynamics": True,
         "multiple_bodies": True, "constraints": True,
         "joint_types": ("spherical", "fixed", "revolute"),
+        "orientation_primitives": ("parallel_axes",),
+        "drive_kinds": ("coordinate_drive", "revolute_drive"),
+        "drive_coordinates": ("x", "y", "z"),
+        "redundant_constraints": "rejected",
+        "unconstrained_bodies": True,
         "reaction_forces": True, "reaction_moments": True,
         "position_projection": True, "velocity_projection": True,
         "simulation_identity": True, "strict_result_validation": True,
@@ -116,10 +122,14 @@ def simulate_constrained_rigid_bodies(
     method: str = "DOP853",
     rtol: float = 1e-9,
     atol: float = 1e-11,
+    max_evaluations: int | None = None,
 ) -> ConstrainedRigidBodyDynamicsResult:
-    """Integrate spherical, fixed, and revolute constrained rigid bodies."""
-    if mechanism.nbody == 0 or not (mechanism._ground is not None or mechanism._joints or mechanism._drives):
-        raise MechanismSolveError("constrained dynamics requires bodies and at least one constraint")
+    """Integrate rigid bodies with optional spherical, fixed, revolute, parallel-axes
+    joints and coordinate / revolute drives. With no constraints the bodies are free."""
+    if mechanism.nbody == 0:
+        raise MechanismSolveError("spatial dynamics requires at least one body", code="invalid_input")
+    if max_evaluations is not None and (isinstance(max_evaluations, bool) or int(max_evaluations) <= 0):
+        raise ValueError("max_evaluations must be a positive integer")
     times = np.asarray(t, dtype=float)
     if times.ndim != 1 or len(times) < 2 or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0):
         raise ValueError("t must be finite, strictly increasing, and contain at least two samples")
@@ -141,7 +151,8 @@ def simulate_constrained_rigid_bodies(
     if any(not isinstance(value, RigidBodyPairInteraction) or max(value.body_i, value.body_j) >= count for value in interaction_values):
         raise ValueError("interactions must reference bodies in this mechanism")
     authored = mechanism._initial_poses() if poses0 is None else mechanism._validate_poses(poses0)
-    poses = mechanism.solve_position(authored, float(times[0]), tol=constraint_tolerance)
+    constrained = len(mechanism.constraint_residual(authored, float(times[0]))) > 0
+    poses = mechanism.solve_position(authored, float(times[0]), tol=constraint_tolerance) if constrained else authored
     com0 = np.asarray([poses[index].translation + poses[index].rotation.rotate(mechanism._bodies[index].center_of_mass) for index in range(count)])
     quaternion0 = np.asarray([pose.rotation.as_array() for pose in poses])
     velocity0 = _matrix3(linear_velocity0, count, "linear_velocity0")
@@ -149,14 +160,38 @@ def simulate_constrained_rigid_bodies(
     u0 = np.concatenate((velocity0, omega0), axis=1).reshape(-1)
     jacobian0 = _generalized_jacobian(mechanism, poses, float(times[0]))
     ct0 = mechanism.constraint_time_derivative(poses, float(times[0]))
-    if linear_velocity0 is None and angular_velocity0_body is None:
-        u0 = np.linalg.lstsq(jacobian0, -ct0, rcond=None)[0]
-    elif _norm(jacobian0 @ u0 + ct0) > constraint_tolerance:
-        raise MechanismSolveError("Initial velocity violates spatial constraints")
     rows = jacobian0.shape[0]
-    rank = int(np.linalg.matrix_rank(jacobian0))
+    rank = int(np.linalg.matrix_rank(jacobian0)) if rows else 0
     if rank < rows:
-        raise MechanismSolveError(f"Constrained dynamics Jacobian is rank-deficient: rank {rank} for {rows} rows")
+        redundant = redundant_constraint_rows(mechanism, poses, float(times[0]))
+        names = sorted({row["name"] for row in redundant})
+        raise MechanismSolveError(
+            f"Constrained dynamics Jacobian is rank-deficient: rank {rank} for {rows} rows; "
+            f"redundant rows belong to {', '.join(names)}",
+            code="rank_deficient",
+            context={"rank": rank, "rows": rows, "redundant_rows": redundant, "constraints": names},
+            remediation=(
+                "Remove the redundancy: a second bearing on a shaft that is already located "
+                "should be parallel_axes(...) instead of revolute(...). Singular start poses "
+                "can also cause this; check the configuration."
+            ),
+        )
+    if linear_velocity0 is None and angular_velocity0_body is None:
+        u0 = np.linalg.lstsq(jacobian0, -ct0, rcond=None)[0] if rows else u0
+    elif rows and _norm(jacobian0 @ u0 + ct0) > constraint_tolerance:
+        violation = jacobian0 @ u0 + ct0
+        layout = _constraint_layout(mechanism, poses)
+        worst = sorted({layout[row]["name"] for row in np.flatnonzero(np.abs(violation) > constraint_tolerance)})
+        raise MechanismSolveError(
+            f"Initial velocity violates spatial constraints {', '.join(worst)} "
+            f"(max velocity residual {_norm(violation):.3e})",
+            code="inconsistent_initial_state",
+            context={"max_velocity_residual": _norm(violation), "constraints": worst},
+            remediation=(
+                "Prescribe the known velocities and call "
+                "mechanism.consistent_velocities(...) for the rest."
+            ),
+        )
     mass_matrix = np.zeros((6 * count, 6 * count))
     for index in range(count):
         mass_matrix[6*index:6*index+3, 6*index:6*index+3] = masses[index] * np.eye(3)
@@ -210,7 +245,18 @@ def simulate_constrained_rigid_bodies(
         reaction = -jacobian.T @ solved[6*count:]
         return solved[:6*count], solved[6*count:], force, torque, interaction_forces, reaction, position, velocity_residual, jacobian, bias
 
+    evaluations = 0
+
     def rhs(ti, state):
+        nonlocal evaluations
+        evaluations += 1
+        if max_evaluations is not None and evaluations > int(max_evaluations):
+            raise MechanismSolveError(
+                f"Integration exceeded max_evaluations={int(max_evaluations)} at t={ti:.6g}.",
+                code="resource_limit",
+                context={"max_evaluations": int(max_evaluations), "t": float(ti)},
+                remediation="Loosen tolerances, shorten the time span, or raise max_evaluations.",
+            )
         _, quaternion, velocity, omega = unpack(state)
         generalized_acceleration, *_ = acceleration(ti, state)
         acceleration_blocks = generalized_acceleration.reshape(count, 6)
@@ -226,7 +272,7 @@ def simulate_constrained_rigid_bodies(
     if not solution.success:
         raise MechanismSolveError(f"Constrained spatial dynamics failed: {solution.message}")
     states = solution.y.T.reshape(len(times), count, 13)
-    if project_samples:
+    if project_samples and rows:
         for time_index, ti in enumerate(times):
             quaternion = np.asarray([_normalized_quaternion(value) for value in states[time_index, :, 3:7]])
             pose_values = state_poses(states[time_index, :, :3], quaternion)
@@ -280,7 +326,7 @@ def simulate_constrained_rigid_bodies(
         "time": times.tolist(), "method": method, "rtol": float(rtol),
         "atol": float(atol), "constraint_tolerance": float(constraint_tolerance),
         "stabilization_frequency": float(stabilization_frequency),
-        "sample_projection": bool(project_samples),
+        "sample_projection": bool(project_samples and rows),
     }
     return ConstrainedRigidBodyDynamicsResult(
         t=times, poses=tuple(pose_history), center_of_mass_position=states[:, :, :3],
@@ -296,7 +342,7 @@ def simulate_constrained_rigid_bodies(
         model_id=mechanism.model_id(),
         excitation_id=excitation_id, simulation_id=_identity(simulation_payload),
         success=True, message="converged",
-        provenance=MappingProxyType({"solver": "scipy.solve_ivp", "method": method, "rtol": float(rtol), "atol": float(atol), "constraint_tolerance": float(constraint_tolerance), "stabilization_frequency": float(stabilization_frequency), "sample_projection": bool(project_samples), "initial_position_projection": True, "multiplier_equation": "M*a + J.T*lambda = applied_generalized_force", "physical_reaction": "-J.T*lambda", "jacobian": "analytic_position_transformed_to_com_body_velocity_basis", "jacobian_rate": "speed_scaled_central_richardson_directional_finite_difference", "gravity_world": tuple(gravity.tolist()), "load_descriptors": tuple(MappingProxyType(value.as_dict()) for value in load_values), "interaction_descriptors": tuple(MappingProxyType(value.as_dict()) for value in interaction_values), "drive_samples": tuple(MappingProxyType(value) for value in drive_samples)}),
+        provenance=MappingProxyType({"solver": "scipy.solve_ivp", "method": method, "rtol": float(rtol), "atol": float(atol), "constraint_tolerance": float(constraint_tolerance), "stabilization_frequency": float(stabilization_frequency), "sample_projection": bool(project_samples and rows), "initial_position_projection": bool(rows), "rhs_evaluations": evaluations, "multiplier_equation": "M*a + J.T*lambda = applied_generalized_force", "physical_reaction": "-J.T*lambda", "jacobian": "analytic_position_transformed_to_com_body_velocity_basis", "jacobian_rate": "speed_scaled_central_richardson_directional_finite_difference", "gravity_world": tuple(gravity.tolist()), "load_descriptors": tuple(MappingProxyType(value.as_dict()) for value in load_values), "interaction_descriptors": tuple(MappingProxyType(value.as_dict()) for value in interaction_values), "drive_samples": tuple(MappingProxyType(value) for value in drive_samples)}),
         capabilities=constrained_capabilities(),
     )
 
@@ -305,7 +351,7 @@ def constrained_diagnostics(mechanism: SpatialMechanism, result: ConstrainedRigi
     _validate_constrained_result(mechanism, result)
     pose0 = result.poses[0]
     jacobian = _generalized_jacobian(mechanism, pose0, float(result.t[0]))
-    rank = int(np.linalg.matrix_rank(jacobian))
+    rank = int(np.linalg.matrix_rank(jacobian)) if jacobian.shape[0] else 0
     masses = np.asarray([body.mass for body in mechanism._bodies])
     force_balance = masses[None, :, None] * result.linear_acceleration - result.applied_force_world - result.reaction_force_world
     gyroscopic = np.cross(
@@ -348,6 +394,10 @@ def constrained_result_to_dict(mechanism: SpatialMechanism, result: ConstrainedR
         "solver_status": {"success": result.success, "message": result.message},
         "provenance": _json_ready(result.provenance), "diagnostics": diagnostics.as_dict(),
         "time": result.t.tolist(), "constraint_layout": layout,
+        "drive_efforts": [
+            {key: value for key, value in effort.items() if key != "units"}
+            for effort in drive_efforts(mechanism, result, layout=layout)
+        ],
         "multipliers": result.multipliers.tolist(),
         "constraint_jacobian": result.constraint_jacobian.tolist(),
         "interaction_force_world": result.interaction_force_world.tolist(),
@@ -370,6 +420,32 @@ def constrained_result_to_dict(mechanism: SpatialMechanism, result: ConstrainedR
             "reaction_torque_body": result.reaction_torque_body[:, index].tolist(),
         } for index, body in enumerate(mechanism._bodies)],
     }
+
+
+def drive_efforts(mechanism: SpatialMechanism, result: ConstrainedRigidBodyDynamicsResult, *, layout=None) -> list[dict[str, Any]]:
+    """Per-drive effort and power histories.
+
+    A coordinate drive's effort is the force (N) it applies to its body along
+    the driven world axis; a revolute drive's effort is the torque (N*m) it
+    applies to the joint's body j about the hinge axis (body i receives the
+    opposite). Both equal ``-lambda`` of the drive row; power is effort times
+    the prescribed velocity.
+    """
+    layout = _constraint_layout(mechanism, result.poses[0]) if layout is None else layout
+    samples = {sample["name"]: sample for sample in _drive_samples(mechanism, result.t)}
+    efforts = []
+    for row in layout:
+        if row["kind"] not in {"drive", "revolute_drive"}:
+            continue
+        effort = -result.multipliers[:, row["row"]]
+        velocity = np.asarray(samples[row["name"]]["velocity"], dtype=float)
+        efforts.append({
+            "name": row["name"], "kind": row["kind"], "row": row["row"],
+            "effort": effort.tolist(), "power": (effort * velocity).tolist(),
+            "effort_units": "N*m" if row["kind"] == "revolute_drive" else "N",
+            "power_units": "W",
+        })
+    return efforts
 
 
 def constrained_result_to_json(mechanism, result, path: str | Path, *, indent: int = 2) -> Path:
@@ -419,18 +495,35 @@ def _validate_constrained_result_payload_v1_legacy(payload: Mapping[str, Any]) -
         raise ValueError("constrained result must contain finite JSON values") from error
 
 
+_V3_CAPABILITY_KEYS = (
+    "orientation_primitives", "drive_kinds", "drive_coordinates",
+    "redundant_constraints", "unconstrained_bodies",
+)
+
+
 def validate_constrained_result_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    if isinstance(payload, Mapping) and payload.get("schema_version") == 1:
+    version = payload.get("schema_version") if isinstance(payload, Mapping) else None
+    if version == 1:
         return _validate_constrained_result_payload_v1_legacy(payload)
     from .constrained_contract import validate_constrained_payload_v2
 
+    capabilities = _json_ready(constrained_capabilities())
+    if version == 2:
+        for key in _V3_CAPABILITY_KEYS:
+            capabilities.pop(key)
+    elif version != CONSTRAINED_RESULT_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported constrained rigid-body result schema_version {version!r}; "
+            f"supported versions are {', '.join(map(str, SUPPORTED_CONSTRAINED_RESULT_SCHEMA_VERSIONS))}"
+        )
     return validate_constrained_payload_v2(
         payload,
         schema=CONSTRAINED_RESULT_SCHEMA,
-        capabilities=_json_ready(constrained_capabilities()),
+        capabilities=capabilities,
         units=_constrained_units(),
         conventions=_constrained_conventions(),
         identity_scope=_identity_scope(),
+        schema_version=version,
     )
 
 
@@ -443,14 +536,22 @@ def _constraint_layout(mechanism, poses):
     if mechanism._ground is not None:
         for component, units in zip(("x", "y", "z", "rx", "ry", "rz"), ("m", "m", "m", "rad", "rad", "rad")):
             layout.append(_layout_row(layout, "ground", mechanism._bodies[mechanism._ground].name, component, mechanism._ground, None, units))
+    components_by_kind = {
+        "spherical": ("x", "y", "z"),
+        "fixed": ("x", "y", "z", "rx", "ry", "rz"),
+        "revolute": ("x", "y", "z", "rx", "ry"),
+        "parallel_axes": ("rx", "ry"),
+    }
     for joint in mechanism._joints:
         kind = joint.as_dict()["kind"]
-        components = ("x", "y", "z") if kind == "spherical" else (("x", "y", "z", "rx", "ry", "rz") if kind == "fixed" else ("x", "y", "z", "rx", "ry"))
-        for component in components:
+        for component in components_by_kind[kind]:
             units = "m" if component in {"x", "y", "z"} else "rad"
             layout.append(_layout_row(layout, kind, joint.name, component, joint.body_i, joint.body_j, units))
     for drive in mechanism._drives:
         layout.append(_layout_row(layout, "drive", drive.name, drive.coordinate, drive.body, None, "m"))
+    for drive in mechanism._revolute_drives:
+        joint = mechanism._joint_named(drive.joint)
+        layout.append(_layout_row(layout, "revolute_drive", drive.name, "rz", joint.body_i, joint.body_j, "rad"))
     if len(layout) != len(mechanism.constraint_residual(poses)):
         raise ValueError("constraint layout does not match residual rows")
     return layout
@@ -553,12 +654,44 @@ def _validate_constrained_result(mechanism, result):
 
 
 def _drive_samples(mechanism, times):
-    return [{
+    samples = [{
         "name": drive.name, "body": drive.body, "coordinate": drive.coordinate,
         "value": [float(drive.value(float(time))) for time in times],
         "velocity": [float(drive.velocity(float(time))) for time in times],
         "acceleration": [float(drive.acceleration_value(float(time))) for time in times],
     } for drive in mechanism._drives]
+    for drive in mechanism._revolute_drives:
+        samples.append({
+            "name": drive.name, "joint": drive.joint, "coordinate": "angle",
+            "value": [float(drive.law.value(float(time))) for time in times],
+            "velocity": [float(drive.law.velocity(float(time))) for time in times],
+            "acceleration": [float(drive.law.acceleration(float(time))) for time in times],
+        })
+    return samples
+
+
+def redundant_constraint_rows(mechanism, poses, t: float = 0.0, *, rtol: float = 1e-8) -> list[dict[str, Any]]:
+    """Return the constraint rows that are linear combinations of earlier rows.
+
+    Rows are scanned in assembly order (ground, joints, drives), so the later
+    joint of a redundant pair is reported, which is usually the one to replace.
+    """
+    jacobian = mechanism.constraint_jacobian(poses, t)
+    layout = _constraint_layout(mechanism, poses)
+    basis: list[np.ndarray] = []
+    redundant = []
+    for row, vector in enumerate(jacobian):
+        remainder = np.array(vector, dtype=float)
+        for _ in range(2):
+            for direction in basis:
+                remainder -= (remainder @ direction) * direction
+        size = float(np.linalg.norm(remainder))
+        if size <= rtol * max(1.0, float(np.linalg.norm(vector))):
+            descriptor = layout[row]
+            redundant.append({key: descriptor[key] for key in ("row", "id", "kind", "name", "component")})
+        else:
+            basis.append(remainder / size)
+    return redundant
 
 
 def _identity(value):

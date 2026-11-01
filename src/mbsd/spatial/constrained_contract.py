@@ -1,4 +1,8 @@
-"""Strict portable validation for constrained spatial dynamics schema v2."""
+"""Strict portable validation for constrained spatial dynamics schemas v2 and v3.
+
+Schema v3 adds parallel-axes and revolute-drive rows, results without
+constraints (free bodies), and the ``drive_efforts`` block.
+"""
 
 from __future__ import annotations
 
@@ -12,11 +16,16 @@ from .rotation import _inertia_tensor, _vector
 from .vocabulary import Quaternion
 
 
+V2_LAYOUT_KINDS = {"ground", "spherical", "fixed", "revolute", "drive"}
+V3_LAYOUT_KINDS = V2_LAYOUT_KINDS | {"parallel_axes", "revolute_drive"}
+
+
 def validate_constrained_payload_v2(
     payload: Mapping[str, Any], *, schema: str, capabilities: dict[str, Any],
     units: dict[str, str], conventions: dict[str, str], identity_scope: dict[str, str],
+    schema_version: int = 2,
 ) -> dict[str, Any]:
-    if not isinstance(payload, Mapping) or payload.get("schema") != schema or payload.get("schema_version") != 2:
+    if not isinstance(payload, Mapping) or payload.get("schema") != schema or payload.get("schema_version") != schema_version:
         raise ValueError("unsupported constrained rigid-body result schema")
     if payload.get("status") != "experimental" or payload.get("solver_kind") != "constrained_spatial_rigid_body_dynamics":
         raise ValueError("invalid constrained solver identity")
@@ -30,11 +39,11 @@ def validate_constrained_payload_v2(
         if not isinstance(payload.get(name), str) or not payload[name]:
             raise ValueError(f"{name} must be a non-empty string")
 
-    provenance = _provenance(payload.get("provenance"))
+    provenance = _provenance(payload.get("provenance"), schema_version)
     times = np.asarray(payload.get("time"), dtype=float)
     if times.ndim != 1 or len(times) < 2 or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0):
         raise ValueError("time must be finite and strictly increasing")
-    layout = _layout(payload.get("constraint_layout"))
+    layout = _layout(payload.get("constraint_layout"), schema_version)
     rows = len(layout)
     histories = _constraint_histories(payload, len(times), rows)
     bodies = _bodies(payload.get("bodies"), len(times))
@@ -46,6 +55,8 @@ def validate_constrained_payload_v2(
                 raise ValueError("constraint_layout body reference is invalid")
 
     jacobians = np.asarray(payload.get("constraint_jacobian"), dtype=float)
+    if rows == 0 and jacobians.size == 0:
+        jacobians = jacobians.reshape(len(times), 0, 6 * body_count)
     if jacobians.shape != (len(times), rows, 6 * body_count) or not np.all(np.isfinite(jacobians)):
         raise ValueError("constraint_jacobian has invalid shape or values")
     interactions = np.asarray(payload.get("interaction_force_world"), dtype=float)
@@ -88,6 +99,8 @@ def validate_constrained_payload_v2(
     }
     if payload["simulation_id"] != _identity(simulation_payload):
         raise ValueError("simulation_id does not match constrained run configuration")
+    if schema_version >= 3:
+        _drive_efforts(payload.get("drive_efforts"), layout, histories["multipliers"], provenance["drive_samples"])
 
     status = payload.get("solver_status")
     if not isinstance(status, Mapping) or not isinstance(status.get("success"), bool) or not isinstance(status.get("message"), str):
@@ -109,7 +122,27 @@ def validate_constrained_payload_v2(
         raise ValueError("constrained result must contain finite JSON values") from error
 
 
-def _provenance(value):
+def _drive_efforts(value, layout, multipliers, drive_samples):
+    drive_rows = [row for row in layout if row["kind"] in {"drive", "revolute_drive"}]
+    if not isinstance(value, list) or len(value) != len(drive_rows):
+        raise ValueError("drive_efforts must list every drive row")
+    samples = {sample.get("name"): sample for sample in drive_samples if isinstance(sample, Mapping)}
+    for item, row in zip(value, drive_rows):
+        if not isinstance(item, Mapping) or item.get("name") != row["name"] or item.get("row") != row["row"]:
+            raise ValueError("drive_efforts identity does not match constraint_layout")
+        expected_units = "N*m" if row["kind"] == "revolute_drive" else "N"
+        if item.get("kind") != row["kind"] or item.get("effort_units") != expected_units or item.get("power_units") != "W":
+            raise ValueError("drive_efforts kind or units are invalid")
+        effort = np.asarray(item.get("effort"), dtype=float)
+        power = np.asarray(item.get("power"), dtype=float)
+        if effort.shape != (multipliers.shape[0],) or not np.allclose(effort, -multipliers[:, row["row"]], atol=1e-12, rtol=1e-12):
+            raise ValueError("drive_efforts effort does not match -lambda")
+        velocity = np.asarray(samples.get(row["name"], {}).get("velocity"), dtype=float)
+        if power.shape != effort.shape or velocity.shape != effort.shape or not np.allclose(power, effort * velocity, atol=1e-12, rtol=1e-12):
+            raise ValueError("drive_efforts power does not match effort * drive velocity")
+
+
+def _provenance(value, schema_version=2):
     required = {
         "solver", "method", "rtol", "atol", "constraint_tolerance",
         "stabilization_frequency", "sample_projection", "initial_position_projection",
@@ -125,7 +158,10 @@ def _provenance(value):
             raise ValueError(f"provenance.{name} must be positive and finite")
     if not isinstance(value["stabilization_frequency"], (int, float)) or not np.isfinite(value["stabilization_frequency"]) or value["stabilization_frequency"] < 0:
         raise ValueError("provenance.stabilization_frequency is invalid")
-    if not isinstance(value["sample_projection"], bool) or value["initial_position_projection"] is not True:
+    if not isinstance(value["sample_projection"], bool) or (
+        value["initial_position_projection"] is not True
+        if schema_version < 3 else not isinstance(value["initial_position_projection"], bool)
+    ):
         raise ValueError("constrained projection provenance is invalid")
     if value["multiplier_equation"] != "M*a + J.T*lambda = applied_generalized_force" or value["physical_reaction"] != "-J.T*lambda":
         raise ValueError("constrained reaction provenance is invalid")
@@ -140,11 +176,12 @@ def _provenance(value):
     return result
 
 
-def _layout(value):
-    if not isinstance(value, list) or not value:
+def _layout(value, schema_version=2):
+    if not isinstance(value, list) or (schema_version < 3 and not value):
         raise ValueError("constraint_layout must be a non-empty list")
+    kinds = V3_LAYOUT_KINDS if schema_version >= 3 else V2_LAYOUT_KINDS
     for row, item in enumerate(value):
-        if not isinstance(item, Mapping) or item.get("row") != row or item.get("kind") not in {"ground", "spherical", "fixed", "revolute", "drive"}:
+        if not isinstance(item, Mapping) or item.get("row") != row or item.get("kind") not in kinds:
             raise ValueError("constraint_layout contains an invalid row")
         component = item.get("component")
         if component not in {"x", "y", "z", "rx", "ry", "rz"} or not isinstance(item.get("name"), str) or not item["name"]:
@@ -164,6 +201,8 @@ def _constraint_histories(payload, steps, rows):
         ("velocity_residuals", (rows, steps)), ("acceleration_residuals", (rows, steps)),
     ):
         values = np.asarray(payload.get(name), dtype=float)
+        if rows == 0 and values.size == 0:
+            values = values.reshape(shape)
         if values.shape != shape or not np.all(np.isfinite(values)):
             raise ValueError(f"{name} has invalid shape or values")
         result[name] = values
@@ -230,7 +269,7 @@ def _diagnostics(bodies, histories, jacobians, success):
         arrays = body["arrays"]
         force_errors.append(body["mass"] * arrays["linear_acceleration"] - arrays["applied_force_world"] - arrays["reaction_force_world"])
         torque_errors.append(np.einsum("ij,tj->ti", body["inertia"], arrays["angular_acceleration_body"]) + np.cross(arrays["angular_velocity_body"], np.einsum("ij,tj->ti", body["inertia"], arrays["angular_velocity_body"])) - arrays["applied_torque_body"] - arrays["reaction_torque_body"])
-    rank = int(np.linalg.matrix_rank(jacobians[0]))
+    rank = int(np.linalg.matrix_rank(jacobians[0])) if jacobians.shape[1] else 0
     return {
         "steps": histories["multipliers"].shape[0],
         "constraints": histories["multipliers"].shape[1],

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multibodysystemsdynamics.com/schemas/mbsd.spatial.constrained-result-v3.schema.json",
+  "title": "MBSD Constrained Spatial Dynamic Result v3",
+  "type": "object",
+  "required": ["schema", "schema_version", "mbsd_version", "status", "solver_kind", "model_id", "excitation_id", "simulation_id", "identity_scope", "units", "conventions", "capabilities", "solver_status", "provenance", "diagnostics", "time", "constraint_layout", "multipliers", "constraint_jacobian", "position_residuals", "velocity_residuals", "acceleration_residuals", "interaction_force_world", "drive_efforts", "bodies"],
+  "properties": {
+    "schema": {"const": "mbsd.spatial.constrained_rigid_body_dynamic_result"},
+    "schema_version": {"const": 3},
+    "status": {"const": "experimental"},
+    "solver_kind": {"const": "constrained_spatial_rigid_body_dynamics"},
+    "model_id": {"type": "string", "minLength": 1},
+    "excitation_id": {"type": "string", "minLength": 1},
+    "simulation_id": {"type": "string", "minLength": 1},
+    "identity_scope": {"type": "object"},
+    "units": {"type": "object"},
+    "conventions": {"type": "object"},
+    "capabilities": {"type": "object"},
+    "solver_status": {"type": "object"},
+    "provenance": {"type": "object"},
+    "diagnostics": {"type": "object"},
+    "time": {"type": "array", "minItems": 2, "items": {"type": "number"}},
+    "constraint_layout": {"type": "array", "items": {"$ref": "#/$defs/layoutRow"}},
+    "drive_efforts": {"type": "array", "items": {"$ref": "#/$defs/driveEffort"}},
+    "multipliers": {"type": "array"},
+    "constraint_jacobian": {"type": "array"},
+    "position_residuals": {"type": "array"},
+    "velocity_residuals": {"type": "array"},
+    "acceleration_residuals": {"type": "array"},
+    "interaction_force_world": {"type": "array"},
+    "bodies": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+  },
+  "$defs": {
+    "layoutRow": {
+      "type": "object",
+      "required": ["row", "id", "kind", "name", "component", "body_i", "body_j", "residual_units", "multiplier_units"],
+      "properties": {
+        "kind": {"enum": ["ground", "spherical", "fixed", "revolute", "parallel_axes", "drive", "revolute_drive"]},
+        "component": {"enum": ["x", "y", "z", "rx", "ry", "rz"]},
+        "residual_units": {"enum": ["m", "rad"]},
+        "multiplier_units": {"enum": ["N", "N*m"]}
+      }
+    },
+    "driveEffort": {
+      "type": "object",
+      "required": ["name", "kind", "row", "effort", "power", "effort_units", "power_units"],
+      "properties": {
+        "kind": {"enum": ["drive", "revolute_drive"]},
+        "effort_units": {"enum": ["N", "N*m"]},
+        "power_units": {"const": "W"},
+        "effort": {"type": "array", "items": {"type": "number"}},
+        "power": {"type": "array", "items": {"type": "number"}}
+      }
+    }
+  }
+}

@@ -28,13 +28,12 @@ from .loads import (
     TabulatedForce,
     TabulatedTorque,
 )
-from .model import Body, MBody, PrismJoint, RevJoint, UserConstraint
+from .kinematics import rot_mat, rot_mat_d
+from .model import Body, MBody, PrismJoint, PuntoLineaJoint, RevJoint, UserConstraint
 from .reactions import JointLoads, joint_loads
 from .simulation import run_kinematic_simulation
 from .solver import solve_acceleration_with_lagrange, solve_position, solve_velocity
-
-
-DEFAULT_MAX_STEPS = 100_000
+from ..reports import DEFAULT_MAX_STEPS, Check, CheckReport, Issue, ValidationReport, check_steps
 
 
 ArrayLike2 = Iterable[float]
@@ -87,80 +86,6 @@ class InverseDynamicsResult:
     a: np.ndarray
     multipliers: np.ndarray
     provenance: Mapping[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class Issue:
-    """One structured finding from ``validate`` with a stable ``code``."""
-
-    code: str
-    severity: str
-    message: str
-    remediation: str | None = None
-
-    def as_dict(self) -> dict[str, str | None]:
-        return {
-            "code": self.code,
-            "severity": self.severity,
-            "message": self.message,
-            "remediation": self.remediation,
-        }
-
-
-@dataclass(frozen=True)
-class ValidationReport:
-    """Pre-solve model report: ``ok`` is false when any issue is an error."""
-
-    ok: bool
-    portable: bool
-    classification: str | None
-    degrees_of_freedom: int | None
-    issues: tuple[Issue, ...]
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "ok": self.ok,
-            "portable": self.portable,
-            "classification": self.classification,
-            "degrees_of_freedom": self.degrees_of_freedom,
-            "issues": [issue.as_dict() for issue in self.issues],
-        }
-
-
-@dataclass(frozen=True)
-class Check:
-    """One post-solve check: ``passed`` is ``None`` when the check was skipped."""
-
-    name: str
-    value: float | None
-    threshold: float | None
-    passed: bool | None
-    note: str | None = None
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "value": self.value,
-            "threshold": self.threshold,
-            "passed": self.passed,
-            "note": self.note,
-        }
-
-
-@dataclass(frozen=True)
-class CheckReport:
-    """Post-solve verdict with the numbers and thresholds behind it."""
-
-    passed: bool
-    result_type: str
-    checks: tuple[Check, ...]
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "passed": self.passed,
-            "result_type": self.result_type,
-            "checks": [check.as_dict() for check in self.checks],
-        }
 
 
 @dataclass(frozen=True)
@@ -422,6 +347,122 @@ class PlanarMechanism:
         )
         self.model.prism_joints.append(joint)
         return joint
+
+    def point_on_line(
+        self,
+        body_a: int | BodyHandle,
+        body_b: int | BodyHandle,
+        *,
+        point_a: ArrayLike2 = (0.0, 0.0),
+        line_point_b: ArrayLike2 = (0.0, 0.0),
+        direction_b: ArrayLike2 = (1.0, 0.0),
+        name: str | None = None,
+    ) -> PuntoLineaJoint:
+        """Keep a point of ``body_a`` on a line fixed to ``body_b`` (1 row).
+
+        Rotation and sliding along the line stay free: a rocker tip on a valve
+        stem, a roller on a flat follower. Its reaction is normal to the line.
+        """
+        direction = _as_vector(direction_b, "direction_b", 2)
+        norm = float(np.linalg.norm(direction))
+        if norm == 0.0:
+            raise ValueError("direction_b must be non-zero")
+        joint = PuntoLineaJoint(
+            i=self._idx(body_a),
+            j=self._idx(body_b),
+            ri=_as_vector(point_a, "point_a", 2),
+            rj=_as_vector(line_point_b, "line_point_b", 2),
+            hi=direction / norm,
+            name=self._claim_name(name, "point_on_line"),
+        )
+        self.model.punto_linea_joints.append(joint)
+        return joint
+
+    def distance_drive(
+        self,
+        body_a: int | BodyHandle,
+        body_b: int | BodyHandle,
+        *,
+        law: MotionLaw,
+        point_a: ArrayLike2 = (0.0, 0.0),
+        point_b: ArrayLike2 = (0.0, 0.0),
+        name: str | None = None,
+    ) -> UserConstraint:
+        """Prescribe the distance between two body points: a linear actuator.
+
+        Models a hydraulic cylinder, shock or screw jack between its two pin
+        points as ``|p_b - p_a| = law(t)``. The drive effort is the axial
+        force, positive when pushing the points apart; ``joint_loads`` reports
+        it with its power, and the base reaction is part of the frame load.
+        """
+        if not isinstance(law, MotionLaw):
+            raise TypeError("law must be a MotionLaw such as ConstantSpeed or Tabulated")
+        a, b = self._idx(body_a), self._idx(body_b)
+        if a == b:
+            raise ValueError("distance_drive needs two different bodies")
+        pa = _as_vector(point_a, "point_a", 2)
+        pb = _as_vector(point_b, "point_b", 2)
+        drive_name = self._claim_name(name, "distance_drive")
+
+        def separation(q):
+            qa, qb = q[3 * a : 3 * a + 3], q[3 * b : 3 * b + 3]
+            d = qb[:2] + rot_mat(qb[2]) @ pb - qa[:2] - rot_mat(qa[2]) @ pa
+            length = float(np.linalg.norm(d))
+            if length == 0.0:
+                raise ValueError(f"distance_drive {drive_name!r} points coincide")
+            return d, length
+
+        def constraint(mb: MBody, q: np.ndarray, t: float) -> np.ndarray:
+            return np.array([separation(q)[1] - law.value(t)])
+
+        def row(q, unit):
+            J = np.zeros((1, self.model.ncoord))
+            J[0, 3 * a : 3 * a + 2] = -unit
+            J[0, 3 * a + 2] = -unit @ (rot_mat_d(q[3 * a + 2]) @ pa)
+            J[0, 3 * b : 3 * b + 2] = unit
+            J[0, 3 * b + 2] = unit @ (rot_mat_d(q[3 * b + 2]) @ pb)
+            return J
+
+        def jacobian_fn(mb: MBody, q: np.ndarray, t: float) -> np.ndarray:
+            d, length = separation(q)
+            return row(q, d / length)
+
+        def dt_jacobian_fn(mb: MBody, q: np.ndarray, v: np.ndarray, t: float) -> np.ndarray:
+            d, length = separation(q)
+            unit = d / length
+            d_rate = (
+                v[3 * b : 3 * b + 2] + v[3 * b + 2] * (rot_mat_d(q[3 * b + 2]) @ pb)
+                - v[3 * a : 3 * a + 2] - v[3 * a + 2] * (rot_mat_d(q[3 * a + 2]) @ pa)
+            )
+            unit_rate = (d_rate - unit * (unit @ d_rate)) / length
+            J = row(q, unit_rate)
+            J[0, 3 * a + 2] += v[3 * a + 2] * (unit @ (rot_mat(q[3 * a + 2]) @ pa))
+            J[0, 3 * b + 2] -= v[3 * b + 2] * (unit @ (rot_mat(q[3 * b + 2]) @ pb))
+            return J
+
+        drive = UserConstraint(
+            constraint,
+            jacobian_fn,
+            dt_jacobian_fn,
+            lambda mb, q, t: np.array([-law.velocity(t)]),
+            lambda mb, q, v, t: np.array([-law.acceleration(t)]),
+            count=1,
+            name=drive_name,
+        )
+        drive.metadata = {
+            "kind": "distance_drive",
+            "name": drive_name,
+            "body": b,
+            "body_a": a,
+            "point_a": pa.tolist(),
+            "point_b": pb.tolist(),
+            "coordinate": "distance",
+            "portable": True,
+            "law": law.to_dict(),
+        }
+        drive.law = law
+        self.model.user_constraints.append(drive)
+        return drive
 
     def motor(
         self,
@@ -995,7 +1036,7 @@ class PlanarMechanism:
         """Run position, velocity, and acceleration solves over ``t``."""
         self._ensure_nonempty_model()
         t = _as_time_array(t)
-        _check_steps(t, max_steps)
+        check_steps(t, max_steps)
         q_initial = self.solve_position(q0, float(t[0]))
         q, v, a = run_kinematic_simulation(self.model, q_initial, t, verbose=verbose)
         return KinematicResult(t=t, q=q, v=v, a=a)
@@ -1025,7 +1066,7 @@ class PlanarMechanism:
         call_Q_user_fn = kwargs.pop("Q_user_fn", None)
         springs, Q_user_fn = self._force_inputs(kwargs.pop("springs", None), call_Q_user_fn)
         t = _as_time_array(t)
-        _check_steps(t, max_steps)
+        check_steps(t, max_steps)
         if t.size < 2:
             raise ValueError("dynamic integration requires at least two time values")
         velocity_tol = _as_finite_scalar(velocity_tol, "velocity_tol")
@@ -1145,7 +1186,7 @@ class PlanarMechanism:
         from .. import __version__ as mbsd_version
 
         t = _as_time_array(t)
-        _check_steps(t, max_steps)
+        check_steps(t, max_steps)
         if self.model.nrestr != self.model.ncoord:
             raise MechanismSolveError(
                 "Inverse dynamics requires a kinematically driven mechanism: "
@@ -1244,17 +1285,6 @@ class PlanarMechanism:
 
         times = np.atleast_1d(np.asarray(t, dtype=float))
         t0, t1 = float(times[0]), float(times[-1])
-        for index, body in enumerate(self.model.bodies):
-            if np.linalg.norm(body.rG, ord=np.inf) > 0.0:
-                issues.append(
-                    Issue(
-                        "offset_center_of_mass",
-                        "error",
-                        f"Body {body.name!r} has an offset center of mass; planar dynamics "
-                        "and inverse dynamics reject it (kinematics is unaffected).",
-                        "Place the body reference point at its center of mass.",
-                    )
-                )
         try:
             q = self.solve_position(
                 q0, t0, allow_underconstrained=self.model.nrestr < self.model.ncoord
@@ -1305,13 +1335,14 @@ class PlanarMechanism:
         for drive in self.model.user_constraints:
             metadata = drive.metadata or {}
             label = drive.name or metadata.get("kind", "user_constraint")
-            if metadata.get("kind") not in {"motor", "coordinate_drive"}:
+            if metadata.get("kind") not in {"motor", "coordinate_drive", "distance_drive"}:
                 issues.append(
                     Issue(
                         "opaque_constraint",
                         "warning",
                         f"User constraint {label!r} is raw Python and is not portable.",
-                        "Use pin, slider, motor, or coordinate_drive(law=...).",
+                        "Use pin, slider, point_on_line, motor, coordinate_drive(law=...) "
+                        "or distance_drive(law=...).",
                     )
                 )
             elif not metadata.get("portable", False):
@@ -1356,7 +1387,6 @@ class PlanarMechanism:
                 )
         for kind, items in (
             ("cam", self.model.leva_joints),
-            ("point_on_line", self.model.punto_linea_joints),
             ("gear", self.model.gear_joints),
         ):
             if items:
@@ -1592,27 +1622,15 @@ def _as_samples(value: Iterable[float], name: str) -> tuple[float, ...]:
     return tuple(float(x) for x in arr)
 
 
-def _check_steps(t: np.ndarray, max_steps: int) -> None:
-    from ..errors import MechanismSolveError
-
-    if len(t) > max_steps:
-        raise MechanismSolveError(
-            f"{len(t)} time samples exceed max_steps={max_steps}.",
-            code="resource_limit",
-            context={"steps": len(t), "max_steps": max_steps},
-            remediation="Use fewer samples or raise max_steps deliberately.",
-        )
-
-
 def planar_capabilities() -> dict[str, Any]:
     """Static description of what the planar builder supports."""
     return {
         "dimension": 2,
         "status": "stable_candidate",
         "coordinates": ["x", "y", "theta"],
-        "joints": ["pin", "slider"],
+        "joints": ["pin", "slider", "point_on_line"],
         "drives": {
-            "kinds": ["motor", "coordinate_drive"],
+            "kinds": ["motor", "coordinate_drive", "distance_drive"],
             "portable_laws": ["constant_speed", "polynomial", "tabulated"],
             "callables": "non_portable",
         },
@@ -1633,7 +1651,7 @@ def planar_capabilities() -> dict[str, Any]:
                     "joint_loads_json"],
         "imports": ["mechanism_json"],
         "limits": {
-            "offset_center_of_mass_dynamics": False,
+            "offset_center_of_mass_dynamics": True,
             "contact": "callback_only",
             "flexible_bodies": False,
             "default_max_steps": DEFAULT_MAX_STEPS,

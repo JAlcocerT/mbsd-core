@@ -1195,5 +1195,6 @@ def test_successful_spatial_result_cannot_exceed_recorded_solver_tolerance():
 def test_spatial_builder_does_not_claim_dynamics():
     mechanism = Mechanism.spatial()
 
-    assert not hasattr(mechanism, "simulate")
+    # The legacy flag keeps its 0.9.x meaning; dynamics is advertised explicitly.
     assert mechanism.capabilities["spatial_dynamics"] is False
+    assert mechanism.capabilities["dynamics_entry_point"] == "simulate"

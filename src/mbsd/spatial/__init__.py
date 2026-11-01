@@ -6,12 +6,14 @@ stabilized.
 """
 
 from .builder import (
+    ConsistentVelocities,
     SpatialBodyHandle,
     SpatialCoordinateDrive,
     SpatialFrameHandle,
     SpatialKinematicResult,
     SpatialMechanism,
     SpatialModelDiagnostics,
+    SpatialRevoluteDrive,
     SpatialResultDiagnostics,
     load_spatial_kinematic_result_payload,
     validate_spatial_kinematic_result_payload,
@@ -65,6 +67,7 @@ from .coupled import (
 from .constrained import (
     CONSTRAINED_RESULT_SCHEMA,
     CONSTRAINED_RESULT_SCHEMA_VERSION,
+    SUPPORTED_CONSTRAINED_RESULT_SCHEMA_VERSIONS,
     constrained_capabilities,
     ConstrainedDynamicsDiagnostics,
     ConstrainedRigidBodyDynamicsResult,
@@ -81,6 +84,7 @@ from .interop import (
 from .vocabulary import (
     FixedJoint3D,
     Frame3D,
+    ParallelAxesJoint3D,
     Pose3D,
     Quaternion,
     RevoluteJoint3D,
@@ -91,10 +95,12 @@ from .vocabulary import (
     SPATIAL_MODEL_SCHEMA_VERSION,
     SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS,
     load_spatial_model_payload,
+    spatial_model_from_payload,
     validate_spatial_model_payload,
 )
 
 __all__ = [
+    "ConsistentVelocities",
     "FixedJoint3D",
     "constraint_groups",
     "coupled_capabilities",
@@ -105,6 +111,7 @@ __all__ = [
     "constrained_capabilities",
     "CONSTRAINED_RESULT_SCHEMA",
     "CONSTRAINED_RESULT_SCHEMA_VERSION",
+    "SUPPORTED_CONSTRAINED_RESULT_SCHEMA_VERSIONS",
     "ConstrainedDynamicsDiagnostics",
     "ConstrainedRigidBodyDynamicsResult",
     "load_constrained_result_payload",
@@ -120,6 +127,7 @@ __all__ = [
     "DYNAMIC_RESULT_SCHEMA",
     "DYNAMIC_RESULT_SCHEMA_VERSION",
     "Frame3D",
+    "ParallelAxesJoint3D",
     "RIGID_BODY_RESULT_SCHEMA",
     "RIGID_BODY_RESULT_SCHEMA_VERSION",
     "RigidBodyDynamicsDiagnostics",
@@ -131,6 +139,7 @@ __all__ = [
     "SphericalJoint3D",
     "SpatialBodyHandle",
     "SpatialCoordinateDrive",
+    "SpatialRevoluteDrive",
     "SpatialFrameHandle",
     "SpatialKinematicResult",
     "SpatialMechanism",
@@ -163,6 +172,7 @@ __all__ = [
     "spherical_joint_descriptor_residual",
     "spherical_joint_residual",
     "spatial_residual_summary",
+    "spatial_model_from_payload",
     "validate_spatial_model_payload",
     "validate_spatial_dynamic_result_payload",
     "validate_spatial_kinematic_result_payload",

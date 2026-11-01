@@ -85,6 +85,27 @@ def dt_jac_prism(joint, qi, qj, vi, vj):
     return DCq
 
 
+_PERP = np.array([[0.0, -1.0], [1.0, 0.0]])
+
+
+def dt_jac_punto_linea(joint, qi, qj, vi, vj):
+    """Time derivative of the point-on-line Jacobian row (6,)."""
+    Ai, Aj = rot_mat(qi[2]), rot_mat(qj[2])
+    normal = Aj @ (_PERP @ joint.hi)
+    normal_rate = vj[2] * (_PERP @ normal)
+    rel_pos = qi[:2] + Ai @ joint.ri - qj[:2] - Aj @ joint.rj
+    rel_vel = (
+        vi[:2] + vi[2] * (rot_mat_d(qi[2]) @ joint.ri)
+        - vj[:2] - vj[2] * (rot_mat_d(qj[2]) @ joint.rj)
+    )
+    row = np.zeros(6)
+    row[:2] = normal_rate
+    row[2] = (vj[2] - vi[2]) * (normal @ (Ai @ joint.ri))
+    row[3:5] = -normal_rate
+    row[5] = -vj[2] * (normal @ rel_pos) + (_PERP @ normal) @ rel_vel
+    return row
+
+
 def dt_jacobian(mbody, q, v, t):
     """Assemble the time derivative of the full Jacobian dCq/dt (nrestr x ncoord).
 
@@ -125,10 +146,10 @@ def dt_jacobian(mbody, q, v, t):
         DCq[row:row + 2, cj:cj + 3] = DCqp[:, 3:6]
         row += 2
 
-    # CAM and point-on-line Jacobians are themselves evaluated by finite
-    # differences. Differentiate their rows along qdot so acceleration-level
-    # constraints retain the configuration-dependent terms.
-    complex_rows = 3 * mbody.nl + mbody.npl
+    # CAM Jacobians are themselves evaluated by finite differences.
+    # Differentiate their rows along qdot so acceleration-level constraints
+    # retain the configuration-dependent terms.
+    complex_rows = 3 * mbody.nl
     if complex_rows:
         from .jacobians import jacobian
 
@@ -139,7 +160,21 @@ def dt_jacobian(mbody, q, v, t):
             - jacobian(mbody, q - step * v, t)
         ) / (2.0 * step)
         DCq[row : row + complex_rows] = derivative[row : row + complex_rows]
-    row += complex_rows + mbody.ng
+    row += complex_rows
+
+    # Point-on-line joints - analytic
+    for joint in mbody.punto_linea_joints:
+        DCpl = dt_jac_punto_linea(
+            joint,
+            mbody.get_qi(q, joint.i), mbody.get_qi(q, joint.j),
+            mbody.get_vi(v, joint.i), mbody.get_vi(v, joint.j),
+        )
+        ci = 3 * joint.i
+        cj = 3 * joint.j
+        DCq[row, ci:ci + 3] += DCpl[:3]
+        DCq[row, cj:cj + 3] += DCpl[3:]
+        row += 1
+    row += mbody.ng
 
     # User constraints
     for uc in mbody.user_constraints:

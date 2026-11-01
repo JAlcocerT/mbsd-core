@@ -14,8 +14,8 @@ import numpy as np
 
 ArrayLike3 = Iterable[float]
 SPATIAL_MODEL_SCHEMA = "mbsd.spatial.model"
-SPATIAL_MODEL_SCHEMA_VERSION = 3
-SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS = (1, 2, 3)
+SPATIAL_MODEL_SCHEMA_VERSION = 4
+SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS = (1, 2, 3, 4)
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,12 @@ class Quaternion:
             aw * bz + ax * by - ay * bx + az * bw,
         )
 
+    def __mul__(self, other: "Quaternion") -> "Quaternion":
+        """``a * b`` is ``a.compose(b)``: apply ``b`` first, then ``a``."""
+        if not isinstance(other, Quaternion):
+            return NotImplemented
+        return self.compose(other)
+
     def conjugate(self) -> "Quaternion":
         return Quaternion(self.w, -self.x, -self.y, -self.z)
 
@@ -164,7 +170,11 @@ class SpatialBody:
             inertia[index] > np.sum(inertia) - inertia[index] + tolerance
             for index in range(3)
         ):
-            raise ValueError("body principal inertia values must satisfy triangle inequalities")
+            raise ValueError(
+                f"body {self.name!r} principal inertia {inertia.tolist()} violates the "
+                "triangle inequalities I_x <= I_y + I_z, I_y <= I_x + I_z, "
+                "I_z <= I_x + I_y; a thin disc spinning about x is (I, I/2, I/2)"
+            )
         object.__setattr__(self, "mass", mass)
         object.__setattr__(self, "inertia", inertia)
         object.__setattr__(
@@ -317,7 +327,45 @@ class RevoluteJoint3D:
         return revolute_joint_descriptor_residual(self, poses)
 
 
-SpatialJoint3D = SphericalJoint3D | FixedJoint3D | RevoluteJoint3D
+@dataclass(frozen=True)
+class ParallelAxesJoint3D:
+    """Two-row orientation primitive: keeps the local-Z axes of two frames parallel.
+
+    It constrains no translation and leaves rotation about the shared axis free,
+    so a shaft already located by one bearing can take a second bearing
+    without redundant rows.
+    """
+
+    name: str
+    body_i: int | None
+    body_j: int | None
+    frame_i: Pose3D = field(default_factory=Pose3D.identity)
+    frame_j: Pose3D = field(default_factory=Pose3D.identity)
+
+    def __post_init__(self) -> None:
+        _validate_joint_name_and_bodies(self.name, self.body_i, self.body_j)
+        if not isinstance(self.frame_i, Pose3D) or not isinstance(self.frame_j, Pose3D):
+            raise TypeError("parallel-axes frames must be Pose3D instances")
+
+    def as_dict(self, index: int | None = None) -> dict[str, Any]:
+        payload = {
+            "kind": "parallel_axes", "id": f"joint:{self.name}", "name": self.name,
+            "body_i": self.body_i, "body_j": self.body_j,
+            "frame_i": self.frame_i.as_dict(), "frame_j": self.frame_j.as_dict(),
+            "parallel_axis": "local_z",
+        }
+        if index is not None:
+            payload["index"] = index
+        return payload
+
+    def residual(self, poses: list[Pose3D] | tuple[Pose3D, ...]) -> np.ndarray:
+        from .kinematics import parallel_axes_descriptor_residual
+
+        return parallel_axes_descriptor_residual(self, poses)
+
+
+SpatialJoint3D = SphericalJoint3D | FixedJoint3D | RevoluteJoint3D | ParallelAxesJoint3D
+JOINT_TYPES = (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D, ParallelAxesJoint3D)
 
 
 @dataclass(frozen=True)
@@ -375,8 +423,11 @@ class SpatialModel:
         )
 
     def with_joint(self, joint: SpatialJoint3D) -> "SpatialModel":
-        if not isinstance(joint, (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D)):
-            raise TypeError("joint must be a SphericalJoint3D, FixedJoint3D, or RevoluteJoint3D")
+        if not isinstance(joint, JOINT_TYPES):
+            raise TypeError(
+                "joint must be a SphericalJoint3D, FixedJoint3D, RevoluteJoint3D, "
+                "or ParallelAxesJoint3D"
+            )
         self._validate_joint_references(joint)
         return SpatialModel(
             bodies=self.bodies,
@@ -406,10 +457,12 @@ class SpatialModel:
                 "spherical_joint_residual": True,
                 "fixed_joint_residual": True,
                 "revolute_joint_residual": True,
+                "parallel_axes_residual": True,
                 "joint_residual_jacobian": {
                     "spherical": "analytic",
                     "fixed": "analytic",
                     "revolute": "analytic",
+                    "parallel_axes": "analytic",
                 },
                 "general_spatial_solver": False,
                 "spatial_dynamics": False,
@@ -429,6 +482,7 @@ class SpatialModel:
                 "frame_pose": "parent_body_local; world_when_parent_body_is_null",
                 "fixed_joint_frames": "body_local; world_when_body_is_null",
                 "revolute_joint_frames": "body_local; world_when body is null; local_z is free",
+                "parallel_axes_frames": "body_local; world_when_body_is_null; local_z axes kept parallel",
                 "inertia": "principal_moments_about_com_in_body_frame",
                 "joint_points": "body_local_xyz; world_xyz_when_body_is_null",
             },
@@ -490,9 +544,9 @@ def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]
         raise ValueError(
             f"schema_version {schema_version} conventions missing: {', '.join(missing)}"
         )
-    if schema_version in (2, 3) and not isinstance(payload.get("capabilities"), Mapping):
+    if schema_version >= 2 and not isinstance(payload.get("capabilities"), Mapping):
         raise ValueError(f"schema_version {schema_version} capabilities must be a mapping")
-    if schema_version in (2, 3):
+    if schema_version >= 2:
         _validate_spatial_model_v2(payload, schema_version)
     try:
         return json.loads(json.dumps(payload, allow_nan=False))
@@ -500,7 +554,15 @@ def validate_spatial_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]
         raise ValueError("spatial model payload must contain finite JSON values") from error
 
 
-def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) -> None:
+def spatial_model_from_payload(payload: Mapping[str, Any]) -> SpatialModel:
+    """Validate a schema v2+ spatial-model payload and rebuild the ``SpatialModel``."""
+    validated = validate_spatial_model_payload(payload)
+    if validated["schema_version"] == 1:
+        raise ValueError("spatial model schema v1 carries no body data to rebuild; re-export it")
+    return _validate_spatial_model_v2(validated, validated["schema_version"])
+
+
+def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) -> SpatialModel:
     if not isinstance(payload.get("mbsd_version"), str) or not payload["mbsd_version"]:
         raise ValueError("mbsd_version must be a non-empty string")
     if payload.get("status") != "experimental" or payload.get("dimension") != 3:
@@ -513,9 +575,10 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) 
     }
     if payload.get("units") != expected_units:
         raise ValueError(f"units must be {expected_units!r}")
-    expected_conventions = SpatialModel().as_dict()["conventions"]
+    expected_conventions = dict(SpatialModel().as_dict()["conventions"])
+    if schema_version <= 3:
+        expected_conventions.pop("parallel_axes_frames", None)
     if schema_version == 2:
-        expected_conventions = dict(expected_conventions)
         expected_conventions.pop("revolute_joint_frames", None)
     if payload.get("conventions") != expected_conventions:
         raise ValueError("conventions must match the schema v2 spatial conventions")
@@ -529,8 +592,10 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) 
         "general_spatial_solver": False,
         "spatial_dynamics": False,
     }
-    if schema_version == 3:
+    if schema_version >= 3:
         expected_flags["revolute_joint_residual"] = True
+    if schema_version >= 4:
+        expected_flags["parallel_axes_residual"] = True
     if not isinstance(capabilities, Mapping) or any(
         capabilities.get(name) is not expected for name, expected in expected_flags.items()
     ):
@@ -539,7 +604,8 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) 
     if not isinstance(jacobian_capabilities, Mapping) or (
         jacobian_capabilities.get("spherical") != "analytic"
         or jacobian_capabilities.get("fixed") not in {"finite_difference", "analytic"}
-        or (schema_version == 3 and jacobian_capabilities.get("revolute") != "analytic")
+        or (schema_version >= 3 and jacobian_capabilities.get("revolute") != "analytic")
+        or (schema_version >= 4 and jacobian_capabilities.get("parallel_axes") != "analytic")
     ):
         raise ValueError("joint_residual_jacobian capabilities are invalid")
     metadata = payload.get("metadata")
@@ -571,11 +637,16 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) 
             for item in payload["joints"]
         ):
             raise ValueError("revolute joints require spatial model schema_version 3")
+        if schema_version <= 3 and any(
+            isinstance(item, Mapping) and item.get("kind") == "parallel_axes"
+            for item in payload["joints"]
+        ):
+            raise ValueError("parallel_axes joints require spatial model schema_version 4")
         joints = tuple(
             _joint_from_payload(item, index)
             for index, item in enumerate(payload["joints"])
         )
-        if schema_version == 3:
+        if schema_version >= 3:
             for kind, values in (
                 ("body", payload["bodies"]),
                 ("frame", payload["frames"]),
@@ -583,9 +654,10 @@ def _validate_spatial_model_v2(payload: Mapping[str, Any], schema_version: int) 
             ):
                 expected_ids = [f"{kind}:{item['name']}" for item in values]
                 if [item.get("id") for item in values] != expected_ids:
-                    raise ValueError(f"schema v3 {kind} ids are invalid")
-        SpatialModel(bodies=bodies, frames=frames, joints=joints, metadata=metadata)
+                    raise ValueError(f"schema v{schema_version} {kind} ids are invalid")
+        model = SpatialModel(bodies=bodies, frames=frames, joints=joints, metadata=metadata)
         _json_ready(dict(metadata))
+        return model
     except (TypeError, ValueError, IndexError, KeyError) as error:
         raise ValueError(f"invalid schema v{schema_version} spatial model: {error}") from error
 
@@ -654,6 +726,14 @@ def _joint_from_payload(value: Any, index: int) -> SpatialJoint3D:
         if value.get("free_axis") != "local_z":
             raise ValueError("revolute joint free_axis must be 'local_z'")
         return RevoluteJoint3D(
+            **common,
+            frame_i=_pose_from_payload(_required(value, "frame_i", "joint"), "frame_i"),
+            frame_j=_pose_from_payload(_required(value, "frame_j", "joint"), "frame_j"),
+        )
+    if kind == "parallel_axes":
+        if value.get("parallel_axis") != "local_z":
+            raise ValueError("parallel_axes joint parallel_axis must be 'local_z'")
+        return ParallelAxesJoint3D(
             **common,
             frame_i=_pose_from_payload(_required(value, "frame_i", "joint"), "frame_i"),
             frame_j=_pose_from_payload(_required(value, "frame_j", "joint"), "frame_j"),
@@ -752,10 +832,10 @@ def _validate_members(values: tuple[Any, ...], expected: type, name: str) -> Non
 
 def _validate_joint_members(joints: tuple[Any, ...]) -> None:
     for index, joint in enumerate(joints):
-        if not isinstance(joint, (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D)):
+        if not isinstance(joint, JOINT_TYPES):
             raise TypeError(
                 f"joints[{index}] must be a SphericalJoint3D, FixedJoint3D, "
-                "or RevoluteJoint3D"
+                "RevoluteJoint3D, or ParallelAxesJoint3D"
             )
 
 

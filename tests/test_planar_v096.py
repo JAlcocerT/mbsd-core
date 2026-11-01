@@ -16,6 +16,7 @@ from mbsd import (
     Tabulated,
 )
 from mbsd.planar import PlanarMechanism
+from mbsd.spatial import SpatialMechanism
 
 M, L, G = 2.0, 1.0, 9.81
 ROD_Q0 = np.array([0.0, 0.0, 0.0, L / 2, 0.0, 0.0])
@@ -109,7 +110,7 @@ def test_joint_loads_payload_matches_schema_contract(tmp_path):
     mechanism, q0 = _slider_crank()
     result = mechanism.inverse_dynamics(np.linspace(0.0, 0.01, 11), q0=q0)
     payload = mechanism.joint_loads_to_dict(result, metadata={"study": "unit"})
-    schema = json.loads((SCHEMAS / "mbsd.planar.joint-loads-v1.schema.json").read_text())
+    schema = json.loads((SCHEMAS / "mbsd.planar.joint-loads-v2.schema.json").read_text())
 
     assert set(schema["required"]) <= payload.keys()
     assert payload["schema"] == "mbsd.planar.joint_loads"
@@ -319,7 +320,7 @@ def test_validate_reports_structured_issues():
     offset.ground()
     offset.body("lump", center_of_mass=(0.1, 0.0))
     codes = {issue.code for issue in offset.validate().issues}
-    assert "offset_center_of_mass" in codes
+    assert "offset_center_of_mass" not in codes
     json.dumps(offset.validate().as_dict())
 
 
@@ -370,7 +371,12 @@ def test_operation_manifest_file_matches_runtime_and_api():
     for operation in manifest["operations"]:
         call = operation["call"].split("(")[0]
         owner, _, attribute = call.rpartition(".")
-        target = mbsd if owner == "mbsd" else PlanarMechanism
+        if owner == "mbsd":
+            target = mbsd
+        elif operation["dimension"] == 3:
+            target = SpatialMechanism
+        else:
+            target = PlanarMechanism
         assert hasattr(target, attribute), operation["call"]
 
 
@@ -378,5 +384,5 @@ def test_capabilities_are_plain_json():
     capabilities = mbsd.capabilities()
     json.dumps(capabilities)
     assert capabilities["planar"]["solvers"]["inverse_dynamics"] is True
-    assert capabilities["planar"]["limits"]["offset_center_of_mass_dynamics"] is False
+    assert capabilities["planar"]["limits"]["offset_center_of_mass_dynamics"] is True
     assert "revolute" in capabilities["spatial"]["joint_types"]

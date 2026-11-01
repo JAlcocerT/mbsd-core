@@ -11,9 +11,9 @@ declare bodies, joints, drives, springs, and forces, then solve the kinematics
 or constrained dynamics with transparent equations.
 
 The stable solver API is intentionally focused on **2D planar mechanisms**.
-Core also contains experimental spatial kinematics and explicitly named
-fixed-orientation, free-body, unconstrained coupled six-DOF, and constrained
-six-DOF solvers. Plotting, gallery, browser UI, larger synthesis workflows,
+Core also contains experimental spatial kinematics and one six-DOF spatial
+`simulate()` for free, coupled, jointed, and driven rigid bodies (plus a
+restricted fixed-orientation translational mode). Plotting, gallery, browser UI, larger synthesis workflows,
 and CAD-specific integrations remain separate while the API stabilizes.
 Portable JSON and CSV exports support downstream applications and neutral CAD
 handoffs.
@@ -23,7 +23,7 @@ handoffs.
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.9.6
+git checkout v0.9.7
 uv sync --extra dev
 ```
 
@@ -104,12 +104,17 @@ m.point_trace_to_csv(result, slider, (0.2, 0.0), "slider-point.csv")
 - Planar inverse dynamics, named joint reactions, drive efforts, frame
   (shaking) loads, portable motion laws and load descriptors, model import,
   and `validate` / `check` guardrails in `0.9.6`.
+- One spatial `simulate()`, `parallel_axes`, portable revolute and coordinate
+  drives, spatial `validate` / `check` / `consistent_velocities`, planar
+  `point_on_line`, `distance_drive`, offset-center-of-mass dynamics, and the
+  public `mbsd.planar.analysis` namespace in `0.9.7`.
 - Preview four-bar synthesis helpers under `mbsd.planar.synthesis`.
 
-The restricted planar and fixed-orientation preview paths retain their stated
-center-of-mass limitations. The unconstrained coupled and constrained six-DOF
-spatial solvers support offset centers of mass and export the distinction
-between center-of-mass state and body reference-origin pose.
+Planar dynamics supports offset centers of mass in inertial frames since
+`0.9.7`; the rotating-frame pseudo-force helper and the fixed-orientation
+spatial mode still require centroidal bodies. Spatial `simulate()` supports
+offset centers of mass and exports the distinction between center-of-mass
+state and body reference-origin pose.
 
 ## Planar Reactions and Guardrails
 
@@ -135,7 +140,7 @@ loads = m.joint_loads(result)
 loads.joints["shoulder"]["force_on_j"]        # world-frame pin force on the rod
 loads.drives["actuator"]["effort"]            # motor torque, N*m
 loads.frame["force"]                          # load the mechanism puts on ground
-m.joint_loads_to_json(result, "loads.json")   # mbsd.planar.joint_loads v1
+m.joint_loads_to_json(result, "loads.json")   # mbsd.planar.joint_loads v2
 ```
 
 - `simulate()` results also carry multipliers, so `joint_loads()` works on
@@ -155,6 +160,94 @@ m.joint_loads_to_json(result, "loads.json")   # mbsd.planar.joint_loads v1
   (`schemas/mbsd.operations-v1.json`).
 - `max_steps` and `max_evaluations` bound work; errors carry a stable `code`,
   `context`, and `remediation`.
+
+### Planar additions in 0.9.7
+
+```python
+import numpy as np
+from mbsd import Mechanism, Polynomial
+from mbsd.planar import analysis
+
+m = Mechanism.planar()
+ground = m.ground()
+boom = m.body("boom", mass=120.0, inertia=40.0, center_of_mass=(1.0, 0.0))
+m.pin(ground, boom, name="boom_pivot")
+m.distance_drive(ground, boom, law=Polynomial((0.583, 0.05)),
+                 point_a=(0.5, -0.5), point_b=(0.8, 0.0), name="cylinder")
+result = m.inverse_dynamics(np.linspace(0.0, 2.0, 41), q0=np.zeros(6))
+m.joint_loads(result).drives["cylinder"]["effort"]   # axial force, + pushes
+analysis.mass_matrix(m, result.q[:, 0])               # public primitives
+```
+
+- `distance_drive()` is a portable linear actuator (hydraulic cylinder,
+  shock, screw jack). Its effort is the axial force, positive when pushing;
+  `joint_loads()` reports it with its power and the frame load includes its
+  base reaction.
+- `point_on_line()` keeps a body point on a line of another body (rocker tip
+  on a valve stem); its reaction is normal to the line.
+- Bodies may have an offset center of mass (`center_of_mass=`) in forward
+  and inverse dynamics.
+- `joint_loads().constraints` reports the generalized reaction of any raw user
+  constraint, so nothing is dropped silently.
+- `mbsd.planar.analysis` exposes the mass matrix, generalized forces,
+  constraint residuals, Jacobian and its rate, constraint groups, equation of
+  motion residuals, and point kinematics. Internal modules carry no stability
+  promise.
+
+## One Spatial simulate() and Spatial Guardrails
+
+MBSD `0.9.7` replaces the free-body, coupled, and constrained entry points
+with one `SpatialMechanism.simulate()`; the old names are deprecated aliases
+until `1.0`. A free body is a model without joints, coupled bodies use
+`interactions=`, and jointed or driven mechanisms use the same call.
+
+```python
+import math
+import numpy as np
+from mbsd import ConstantSpeed, Mechanism
+from mbsd.spatial import Pose3D, Quaternion
+
+beta = math.radians(30.0)
+z_to_x = Quaternion.from_axis_angle((0, 1, 0), math.pi / 2)
+z_to_y = Quaternion.from_axis_angle((1, 0, 0), -math.pi / 2)
+z_to_out = Quaternion.from_axis_angle((0, 0, 1), beta) * z_to_x
+
+m = Mechanism.spatial()
+ground = m.ground()
+shaft_in = m.body("shaft_in", mass=5.0, inertia=(0.04, 0.02, 0.02))
+cross = m.body("cross", mass=0.3, inertia=(0.002, 0.002, 0.002))
+shaft_out = m.body("shaft_out", mass=2.0, inertia=(0.02, 0.02, 0.02))
+bearing = m.revolute(ground, shaft_in, frame_i=Pose3D(rotation=z_to_x),
+                     frame_j=Pose3D(rotation=z_to_x), name="input_bearing")
+m.revolute(shaft_in, cross, frame_i=Pose3D(rotation=z_to_y),
+           frame_j=Pose3D(rotation=z_to_y), name="yoke_in")
+m.revolute(cross, shaft_out, name="yoke_out")
+m.parallel_axes(ground, shaft_out, frame_i=Pose3D(rotation=z_to_out),
+                frame_j=Pose3D(rotation=z_to_out), name="output_bearing")
+m.revolute_drive(bearing, law=ConstantSpeed(rate=4 * math.pi), name="motor")
+
+print(m.validate().as_dict())          # DOF 0, no redundant constraints
+result = m.simulate(np.linspace(0.0, 0.25, 51))
+print(m.check(result).passed)          # residuals, force/torque balance
+m.drive_efforts(result)["motor"]       # input torque and power
+```
+
+- `parallel_axes()` keeps two local-Z axes parallel (2 rows, no translation),
+  so a shaft located by one bearing can take a second one without redundant
+  constraints. A second `revolute()` there is redundant: `validate()` names
+  the joint and `simulate()` raises `rank_deficient` with the rows in
+  `context`.
+- `revolute_drive(joint, law=...)` prescribes a hinge angle; spatial
+  `coordinate_drive(..., law=...)` makes translation drives portable. Both
+  export their effort and power in result schema v3, and
+  `SpatialMechanism.from_json()` rebuilds law-described drives.
+- `consistent_velocities(angular_velocity_body={"shaft_in": (w, 0, 0)})`
+  completes partial initial velocities (minimum kinetic energy); initial
+  velocities can be dicts keyed by body name.
+- `validate()` reports redundant constraints, free DOF, inconsistent initial
+  velocities, non-portable drives, table domains, and resource limits;
+  `check()` returns residual, balance, and energy verdicts with thresholds.
+- `max_steps` and `max_evaluations` bound `simulate()`.
 
 ## Experimental Spatial Vocabulary
 
@@ -249,15 +342,12 @@ from mbsd import Mechanism
 m = Mechanism.spatial()
 rotor = m.body("rotor", inertia=(2.0, 3.0, 4.0))
 motor = m.rigid_body_load(rotor, torque=(2.0, 0.0, 0.0))
-result = m.simulate_free_body(np.linspace(0.0, 1.0, 101), loads=(motor,))
-print(m.rigid_body_diagnostics(result).as_dict())
+result = m.simulate(np.linspace(0.0, 1.0, 101), loads=(motor,))
+print(m.check(result).as_dict())
 ```
 
-The `simulate_free_body()` solver deliberately remains a one-body API. Use
-`simulate_coupled_rigid_bodies()` for unconstrained multi-body motion. Both
-solvers reject ground bodies, joints, and coordinate drives. Use the separate
-`simulate_constrained_rigid_bodies()` API added in `0.9.4` for supported
-jointed mechanisms.
+Since `0.9.7` this case runs through `simulate()`; the original
+`simulate_free_body()` entry point is a deprecated alias until `1.0`.
 
 ## Coupled Six-DOF Rigid Bodies
 
@@ -277,13 +367,16 @@ m = Mechanism.spatial()
 a = m.body("a", mass=2.0, pose=Pose3D((-1.0, 0.0, 0.0)))
 b = m.body("b", mass=3.0, pose=Pose3D((1.0, 0.0, 0.0)))
 pair = m.pair_interaction(a, b, (6.0, 0.0, 0.0), name="pair")
-result = m.simulate_coupled_rigid_bodies(
+result = m.simulate(
     np.linspace(0.0, 1.0, 51),
     interactions=(pair,),
     gravity_world=(0.0, 0.0, -9.81),
 )
-print(m.coupled_diagnostics(result).as_dict())
+print(m.diagnostics(result).as_dict())
 ```
+
+Since `0.9.7` this runs through `simulate()`; `simulate_coupled_rigid_bodies()`
+is a deprecated alias until `1.0` and still writes the coupled-result schema.
 
 Coupled-result schema version 2 binds in-memory results to their originating
 mechanism and publishes three deliberately separate identities: `model_id`
@@ -292,14 +385,13 @@ complete initial state, effective inertia, time grid, and solver controls.
 Per-interaction force histories make the equal-and-opposite construction
 portable and independently checkable by readers.
 
-This solver remains unconstrained: ground bodies, joints, coordinate drives,
-contacts, and reaction forces are rejected. Use
-`simulate_constrained_rigid_bodies()` for supported jointed mechanisms.
+The legacy coupled solver remains unconstrained: ground bodies, joints,
+drives, contacts, and reaction forces are rejected there.
 
 ## Constrained Rotational Dynamics
 
-MBSD `0.9.4` adds `simulate_constrained_rigid_bodies()` for small spatial
-mechanisms using spherical, fixed, and revolute joints. The solver assembles
+MBSD `0.9.4` adds constrained spatial dynamics (now `simulate()`) for small
+spatial mechanisms using spherical, fixed, and revolute joints. The solver assembles
 the mass/Jacobian saddle system in center-of-mass linear and body-angular
 coordinates, includes `Jdot*v`, and reports physical reactions as
 `-J.T*lambda` in world-force/body-moment components.
@@ -319,9 +411,7 @@ ground = m.ground()
 rotor = m.body("rotor", inertia=(2.0, 3.0, 4.0))
 m.revolute(ground, rotor, name="hinge")
 motor = m.rigid_body_load(rotor, torque=(0.0, 0.0, 4.0))
-result = m.simulate_constrained_rigid_bodies(
-    np.linspace(0.0, 1.0, 51), loads=(motor,)
-)
+result = m.simulate(np.linspace(0.0, 1.0, 51), loads=(motor,))
 print(m.constrained_diagnostics(result).as_dict())
 ```
 
@@ -330,7 +420,8 @@ Contact, collision, friction, and flexible-body dynamics remain unsupported.
 ## Engine-Neutral Interoperability
 
 MBSD `0.9.5` publishes spatial-model schema v3, constrained-result schema v2,
-and transform-track handoff schema v1. `build_transform_handoff()` validates a
+and transform-track handoff schema v1 (`0.9.7` emits spatial-model v4 and
+constrained-result v3; the older versions stay readable). `build_transform_handoff()` validates a
 spatial result before converting poses into an explicit target unit, axis map,
 quaternion order, time base, optional geometry references, and content-derived
 artifact identity. Both spatial kinematic and rigid-body dynamic result
@@ -433,7 +524,12 @@ The handoff schemas available since `0.4.0` are:
 - `mbsd.planar.point_trace`: position, velocity, and optional acceleration for
   a named point expressed in a body's local frame.
 - `mbsd.planar.joint_loads` (since `0.9.6`): named joint reactions, drive
-  efforts and power, and the frame load over time.
+  efforts and power, and the frame load over time. Version 2 (`0.9.7`) adds
+  distance drives, a drive `kind`, and raw user-constraint reactions.
+
+`0.9.7` emits `mbsd.planar.mechanism` v2, which adds `point_on_line` joints and
+`distance_drive` entries; readers accept v1 and v2, and v0.9.6 readers reject
+v2 instead of silently dropping those constraints.
 
 Since `0.9.6`, mechanism payloads also carry joint and drive names, portable
 motion laws, registered springs, load descriptors, and a top-level `portable`

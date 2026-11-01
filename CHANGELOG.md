@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.9.7 - One Spatial simulate(), Cardan Joints, and Linear Actuators
+
+- Add `SpatialMechanism.simulate()`: one six-DOF entry point for free,
+  coupled, jointed, and driven rigid bodies, with `max_steps` and
+  `max_evaluations`. `simulate_free_body()`, `simulate_coupled_rigid_bodies()`
+  and `simulate_constrained_rigid_bodies()` are deprecated aliases until 1.0;
+  `simulate_fixed_orientation()` stays as a restricted mode.
+- Add the `parallel_axes()` orientation primitive (`ParallelAxesJoint3D`, two
+  rows). A U-joint or shaft on two bearings becomes exactly determined; the
+  Cardan speed ratio matches the closed form to ~1e-9 and a double Cardan
+  gives constant output speed.
+- Add portable `revolute_drive(joint, law=...)` and `law=` on spatial
+  `coordinate_drive()`; `drive_efforts()` reports drive torque or force and
+  power. `SpatialMechanism.from_dict()` / `from_json()` rebuild law-described
+  drives; callable drives raise `NotPortableError`.
+- Add spatial `validate()` (redundant constraints named by joint, free DOF,
+  inconsistent initial velocities, portability, table domains, resource
+  limits), `check()` (residuals, force/torque balance, energy drift),
+  `consistent_velocities()`, `redundant_constraints()`, `constraint_layout()`
+  and `diagnostics()`.
+- Structured spatial errors: `rank_deficient` (with redundant rows and joint
+  names), `inconsistent_initial_state`, `unsupported_capability`, and
+  `invalid_input`, each with remediation text.
+- Spatial ergonomics: `Quaternion.__mul__` composes, inertia errors show the
+  values and the triangle rule, initial velocities accept dicts keyed by body
+  name, and shape errors explain the ground row.
+- Emit spatial-model schema v4 (`parallel_axes`, portable drive laws) and
+  constrained-result schema v3 (`parallel_axes` / `revolute_drive` rows,
+  `drive_efforts`, results without constraints); v1-v3 and v1-v2 stay
+  readable. The builder's `to_dict()` now keeps the model `capabilities` and
+  moves builder capabilities to `solver_capabilities`.
+- Add planar `point_on_line()` with an analytic Jacobian and Jacobian rate,
+  and the portable `distance_drive()` linear actuator. `joint_loads()`
+  reports distance-drive force and power, raw user-constraint reactions
+  (`constraints`), and their ground share in the frame load.
+- Support planar offset centers of mass in forward and inverse dynamics (the
+  quadratic-velocity term is added); only rotating-frame dynamics still
+  rejects them.
+- Add the public `mbsd.planar.analysis` namespace: mass matrix, generalized
+  forces, constraint residual / Jacobian / rates, constraint groups,
+  equation-of-motion and acceleration residuals, point kinematics.
+- Emit planar mechanism schema v2 (`point_on_line`, `distance_drive`) and
+  joint-loads schema v2 (drive `kind`, `distance` coordinate, user-constraint
+  block); v1 mechanisms stay readable.
+- Extend the operation manifest to spatial operations and add structured
+  solver option descriptions (type, default, range or enum, units, meaning).
+- `NotPortableError` is also a `ValueError`. `Issue`, `ValidationReport`,
+  `Check` and `CheckReport` live in `mbsd.reports` and are shared by both
+  builders.
+
 ## v0.9.6 - Planar Reactions, Portable Descriptors, and Guardrails
 
 - Add `PlanarMechanism.inverse_dynamics()` for fully driven mechanisms and

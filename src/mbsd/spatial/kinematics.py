@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from .vocabulary import (
-    FixedJoint3D, Frame3D, Pose3D, Quaternion, RevoluteJoint3D, SphericalJoint3D,
+    FixedJoint3D, Frame3D, ParallelAxesJoint3D, Pose3D, Quaternion, RevoluteJoint3D,
+    SphericalJoint3D,
 )
 
 
@@ -131,8 +132,43 @@ def revolute_joint_descriptor_residual(
     )
 
 
+def parallel_axes_descriptor_residual(
+    joint: ParallelAxesJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+) -> np.ndarray:
+    """Return the two transverse rotation residuals that keep local-Z axes parallel."""
+    if not isinstance(joint, ParallelAxesJoint3D):
+        raise TypeError("joint must be a ParallelAxesJoint3D")
+    frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)
+    frame_j = _joint_frame_pose(joint.body_j, joint.frame_j, poses)
+    relative = frame_j.rotation.inverse().compose(frame_i.rotation).as_array()
+    return 2.0 * relative[1:3]
+
+
+def revolute_joint_angle(
+    joint: RevoluteJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+) -> float:
+    """Rotation of frame j relative to frame i about the hinge local Z, in (-pi, pi]."""
+    if not isinstance(joint, RevoluteJoint3D):
+        raise TypeError("joint must be a RevoluteJoint3D")
+    frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)
+    frame_j = _joint_frame_pose(joint.body_j, joint.frame_j, poses)
+    w, _, _, z = frame_i.rotation.inverse().compose(frame_j.rotation).as_array()
+    return float(2.0 * np.arctan2(z, w))
+
+
+def revolute_joint_axis_world(
+    joint: RevoluteJoint3D,
+    poses: list[Pose3D] | tuple[Pose3D, ...],
+) -> np.ndarray:
+    """World direction of the hinge axis (frame i local Z)."""
+    frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)
+    return frame_i.rotation.rotate((0.0, 0.0, 1.0))
+
+
 def joint_residual_jacobian(
-    joint: SphericalJoint3D | FixedJoint3D | RevoluteJoint3D,
+    joint: SphericalJoint3D | FixedJoint3D | RevoluteJoint3D | ParallelAxesJoint3D,
     poses: list[Pose3D] | tuple[Pose3D, ...],
     *,
     step: float = 1e-7,
@@ -144,8 +180,10 @@ def joint_residual_jacobian(
     Spherical- and fixed-joint blocks are analytic. Fixed-joint rotation uses
     the local SO(3) logarithm chart and rejects the ambiguous 180-degree branch.
     """
-    if not isinstance(joint, (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D)):
-        raise TypeError("joint must be spherical, fixed, or revolute")
+    if not isinstance(
+        joint, (SphericalJoint3D, FixedJoint3D, RevoluteJoint3D, ParallelAxesJoint3D)
+    ):
+        raise TypeError("joint must be spherical, fixed, revolute, or parallel_axes")
     if not isinstance(poses, (list, tuple)) or not all(
         isinstance(pose, Pose3D) for pose in poses
     ):
@@ -157,6 +195,8 @@ def joint_residual_jacobian(
         return _spherical_joint_residual_jacobian(joint, poses)
     if isinstance(joint, FixedJoint3D):
         return _fixed_joint_residual_jacobian(joint, poses)
+    if isinstance(joint, ParallelAxesJoint3D):
+        return _revolute_joint_residual_jacobian(joint, poses)[3:]
     return _revolute_joint_residual_jacobian(joint, poses)
 
 
@@ -213,7 +253,7 @@ def _fixed_joint_residual_jacobian(
 
 
 def _revolute_joint_residual_jacobian(
-    joint: RevoluteJoint3D,
+    joint: RevoluteJoint3D | ParallelAxesJoint3D,
     poses: list[Pose3D] | tuple[Pose3D, ...],
 ) -> np.ndarray:
     frame_i = _joint_frame_pose(joint.body_i, joint.frame_i, poses)

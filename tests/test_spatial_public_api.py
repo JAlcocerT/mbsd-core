@@ -143,13 +143,14 @@ def test_spatial_model_exports_posed_bodies_frames_and_joint_sketches(tmp_path):
         "joints",
     } <= payload.keys()
     assert payload["schema"] == "mbsd.spatial.model"
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["mbsd_version"] == mbsd.__version__
     assert payload["status"] == "experimental"
     assert payload["capabilities"]["joint_residual_jacobian"] == {
         "spherical": "analytic",
         "fixed": "analytic",
         "revolute": "analytic",
+        "parallel_axes": "analytic",
     }
     assert payload["capabilities"]["general_spatial_solver"] is False
     assert payload["units"]["inertia"] == "kg*m^2"
@@ -601,7 +602,7 @@ def test_transform_handoff_is_engine_neutral_scaled_and_self_validating():
 def test_spatial_model_schema_v3_owns_revolute_joint_kind():
     model = SpatialModel().with_body(SpatialBody("body"))
     payload = model.with_joint(RevoluteJoint3D("hinge", None, 0)).as_dict()
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["bodies"][0]["id"] == "body:body"
     assert payload["joints"][0]["id"] == "joint:hinge"
     assert validate_spatial_model_payload(payload)["joints"][0]["kind"] == "revolute"
@@ -609,5 +610,6 @@ def test_spatial_model_schema_v3_owns_revolute_joint_kind():
     old_version = json.loads(json.dumps(payload))
     old_version["schema_version"] = 2
     old_version["conventions"].pop("revolute_joint_frames")
+    old_version["conventions"].pop("parallel_axes_frames")
     with pytest.raises(ValueError, match="schema_version 3"):
         validate_spatial_model_payload(old_version)

@@ -39,6 +39,9 @@ class ConstraintGroup:
         return slice(self.start, self.start + self.count)
 
 
+DRIVE_KINDS = {"motor", "coordinate_drive", "distance_drive"}
+
+
 def constraint_groups(mbody) -> list[ConstraintGroup]:
     """Return the constraint groups in assembly order."""
     groups = [ConstraintGroup("ground_fixture", 0, "ground_fixture", 0, 3, (0,))]
@@ -60,14 +63,19 @@ def constraint_groups(mbody) -> list[ConstraintGroup]:
     add("gear", mbody.gear_joints, lambda j: 1, lambda j: (j.i, j.j), "gear")
 
     def user_bodies(uc):
-        body = (getattr(uc, "metadata", {}) or {}).get("body")
-        return () if body is None else (int(body),)
+        metadata = getattr(uc, "metadata", {}) or {}
+        body = metadata.get("body")
+        if body is None:
+            return ()
+        if metadata.get("body_a") is not None:
+            return (int(metadata["body_a"]), int(body))
+        return (int(body),)
 
     def user_kind_groups():
         nonlocal row
         for index, uc in enumerate(mbody.user_constraints):
             metadata = dict(getattr(uc, "metadata", {}) or {})
-            kind = "drive" if metadata.get("kind") in {"motor", "coordinate_drive"} else "user"
+            kind = "drive" if metadata.get("kind") in DRIVE_KINDS else "user"
             name = getattr(uc, "name", "") or f"{kind}_{index}"
             groups.append(ConstraintGroup(kind, index, name, row, uc.count, user_bodies(uc), metadata))
             row += uc.count
@@ -83,9 +91,13 @@ class JointLoads:
     ``joints[name]`` holds, for both connected bodies, the world-frame force
     the joint applies to that body and the moment about the joint's world
     point. ``drives[name]`` holds the generalized effort (N or N*m) the drive
-    applies to its body coordinate and the matching power. ``frame`` holds the
+    applies to its body coordinate and the matching power; a distance drive's
+    effort is its axial force, positive when pushing its points apart.
+    ``constraints[name]`` holds the full generalized reaction ``-C_q.T λ``
+    (one row per coordinate) of each raw user constraint. ``frame`` holds the
     total force and moment (about the world origin) the mechanism exerts on the
-    ground body, assuming drive actuators react against ground.
+    ground body; coordinate drives react against ground, distance drives and
+    user constraints through their own ground attachment.
     """
 
     t: np.ndarray
@@ -93,6 +105,7 @@ class JointLoads:
     drives: dict[str, dict[str, Any]]
     frame: dict[str, np.ndarray]
     max_action_reaction_residual: float
+    constraints: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 _DRIVE_OFFSETS = {"x": 0, "y": 1, "theta": 2}
@@ -103,6 +116,7 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
     nsteps = len(t)
     joints: dict[str, dict[str, Any]] = {}
     drives: dict[str, dict[str, Any]] = {}
+    user: dict[str, dict[str, Any]] = {}
     frame_force = np.zeros((2, nsteps))
     frame_moment = np.zeros(nsteps)
     max_residual = 0.0
@@ -123,10 +137,19 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
             joints[group.name]["_joint"] = joint
         elif group.kind == "drive":
             drives[group.name] = {
+                "kind": group.metadata.get("kind"),
                 "body": group.metadata.get("body"),
                 "coordinate": group.metadata.get("coordinate"),
                 "effort": np.zeros(nsteps),
                 "power": np.zeros(nsteps),
+            }
+            if group.metadata.get("kind") == "distance_drive":
+                drives[group.name]["body_a"] = group.metadata.get("body_a")
+        elif group.kind == "user":
+            user[group.name] = {
+                "kind": "user",
+                "rows": group.count,
+                "generalized_force": np.zeros((mbody.ncoord, nsteps)),
             }
 
     for step in range(nsteps):
@@ -150,6 +173,15 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
                         frame_force[:, step] += force
                         frame_moment[step] += moment + _cross(point, force)
                 max_residual = max(max_residual, float(np.max(np.abs(totals))))
+            elif group.name in drives and drives[group.name]["kind"] == "distance_drive":
+                record = drives[group.name]
+                effort = -float(lam[group.rows][0])
+                record["effort"][step] = effort
+                record["power"][step] = effort * float(Cq[group.rows][0] @ vk)
+                _add_ground_share(Q, qk, frame_force, frame_moment, step)
+            elif group.name in user:
+                user[group.name]["generalized_force"][:, step] = Q
+                _add_ground_share(Q, qk, frame_force, frame_moment, step)
             elif group.name in drives:
                 record = drives[group.name]
                 coordinate = record["coordinate"]
@@ -178,7 +210,15 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
         drives=drives,
         frame={"force": frame_force, "moment": frame_moment},
         max_action_reaction_residual=max_residual,
+        constraints=user,
     )
+
+
+def _add_ground_share(Q, q, frame_force, frame_moment, step) -> None:
+    """Add a group's generalized reaction on the ground body (body 0) to the frame."""
+    force = Q[0:2]
+    frame_force[:, step] += force
+    frame_moment[step] += float(Q[2]) + _cross(q[0:2], force)
 
 
 def _joint_object(mbody, group: ConstraintGroup):
@@ -193,7 +233,14 @@ def _joint_object(mbody, group: ConstraintGroup):
 
 
 def _joint_point(joint, kind: str, q: np.ndarray) -> np.ndarray:
-    """World point of the joint: body-j attachment point (body-j origin for gears)."""
+    """World point of the joint: body-j attachment point (body-j origin for gears).
+
+    For point-on-line it is the body-i point riding on the line, where the
+    normal reaction acts on both bodies.
+    """
+    if kind == "point_on_line":
+        origin = q[3 * joint.i : 3 * joint.i + 2]
+        return origin + rot_mat(q[3 * joint.i + 2]) @ np.asarray(joint.ri, dtype=float)
     j = joint.j
     origin = q[3 * j : 3 * j + 2]
     local = getattr(joint, "rj", None)

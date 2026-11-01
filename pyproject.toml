@@ -1,6 +1,6 @@
 [project]
 name = "mbsd"
-version = "0.9.6"
+version = "0.9.7"
 description = "Readable Python tools for planar multibody mechanism kinematics and dynamics."
 readme = "readme.md"
 requires-python = ">=3.10"
@@ -58,6 +58,8 @@ packages = ["src/mbsd"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Legacy spatial entry points stay covered until 1.0; their warning is tested explicitly.
+filterwarnings = ["ignore:SpatialMechanism\\.simulate_.*deprecated:DeprecationWarning"]
 
 [tool.uv]
 package = true

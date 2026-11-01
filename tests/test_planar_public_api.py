@@ -12,7 +12,6 @@ from mbsd.planar.derivatives import dt_constraints, dt_jacobian, dtdt_constraint
 from mbsd.planar.dynamics import (
     solve_dynamics_rk45,
     solve_dynamics_scipy,
-    solve_inverse_dynamics,
 )
 from mbsd.planar.forces import centrifugal_forces
 from mbsd.planar.jacobians import jacobian
@@ -309,7 +308,7 @@ def test_underconstrained_dynamics_requires_explicit_opt_in():
         mechanism.simulate(np.array([0.0, 0.1]), q0=q0, springs=[spring])
 
 
-def test_dynamics_rejects_offset_center_of_mass_for_now():
+def test_dynamics_accepts_offset_center_of_mass():
     mechanism = Mechanism.planar(gravity=(0.0, 0.0))
     ground = mechanism.ground()
     body = mechanism.body("offset", mass=1.0, inertia=0.01, center_of_mass=(0.2, 0.0))
@@ -318,12 +317,8 @@ def test_dynamics_rejects_offset_center_of_mass_for_now():
     q0 = np.zeros(mechanism.ncoord)
     q0[3] = 1.0
 
-    with pytest.raises(MechanismSolveError, match="center of mass"):
-        mechanism.simulate(
-            np.array([0.0, 0.1]),
-            q0=q0,
-            allow_underconstrained=True,
-        )
+    result = mechanism.simulate(np.array([0.0, 0.1]), q0=q0, allow_underconstrained=True)
+    assert np.allclose(result.q[:, -1], q0)
 
 
 def test_dynamics_rejects_inconsistent_initial_velocity():
@@ -631,8 +626,8 @@ def test_empty_planar_mechanism_has_clear_public_error(operation):
         operation(Mechanism.planar())
 
 
-@pytest.mark.parametrize("entry_point", ["scipy", "rk45", "inverse"])
-def test_lower_level_dynamics_reject_offset_center_of_mass(entry_point):
+@pytest.mark.parametrize("entry_point", ["scipy", "rk45"])
+def test_lower_level_rotating_frame_dynamics_reject_offset_center_of_mass(entry_point):
     model = MBody()
     model.g = np.zeros(2)
     model.bodies.append(
@@ -644,11 +639,9 @@ def test_lower_level_dynamics_reject_offset_center_of_mass(entry_point):
 
     with pytest.raises(MechanismSolveError, match="center of mass"):
         if entry_point == "scipy":
-            solve_dynamics_scipy(model, q0, v0, t, allow_underconstrained=True)
-        elif entry_point == "rk45":
-            solve_dynamics_rk45(model, q0, v0, t, allow_underconstrained=True)
+            solve_dynamics_scipy(model, q0, v0, t, omega=1.0, allow_underconstrained=True)
         else:
-            solve_inverse_dynamics(model, q0, t)
+            solve_dynamics_rk45(model, q0, v0, t, omega=1.0, allow_underconstrained=True)
 
 
 def test_user_constraint_derivative_rows_follow_lower_level_constraints():
@@ -816,7 +809,7 @@ def test_planar_mechanism_and_result_exports_are_json_ready(tmp_path):
         "forces",
     } <= mechanism_payload.keys()
     assert mechanism_payload["schema"] == "mbsd.planar.mechanism"
-    assert mechanism_payload["schema_version"] == 1
+    assert mechanism_payload["schema_version"] == 2
     assert mechanism_payload["units"]["length"] == "m"
     assert mechanism_payload["units"]["angle"] == "rad"
     assert mechanism_payload["conventions"]["rotation"] == "counterclockwise_positive"
@@ -856,7 +849,7 @@ def test_planar_mechanism_and_result_exports_are_json_ready(tmp_path):
     )
     trajectory_csv = mechanism.result_to_csv(result, tmp_path / "trajectory.csv")
 
-    assert json.loads(mechanism_json.read_text(encoding="utf-8"))["schema_version"] == 1
+    assert json.loads(mechanism_json.read_text(encoding="utf-8"))["schema_version"] == 2
     assert json.loads(result_json.read_text(encoding="utf-8"))["coordinates"]["a"]
     with trajectory_csv.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))

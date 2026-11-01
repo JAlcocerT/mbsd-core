@@ -1,6 +1,7 @@
 """Planar mechanism modeling and simulation."""
 
 from ..errors import MechanismSolveError
+from . import analysis
 from .builder import (
     BodyHandle,
     Check,
@@ -59,6 +60,7 @@ __all__ = [
     "Spring",
     "Tabulated",
     "ValidationReport",
+    "analysis",
     "joint_loads_to_dict",
     "joint_loads_to_json",
     "mechanism_from_dict",
