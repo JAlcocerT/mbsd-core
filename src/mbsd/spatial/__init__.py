@@ -99,81 +99,37 @@ from .vocabulary import (
     validate_spatial_model_payload,
 )
 
-__all__ = [
-    "ConsistentVelocities",
-    "FixedJoint3D",
-    "constraint_groups",
-    "coupled_capabilities",
-    "COUPLED_RESULT_SCHEMA",
-    "COUPLED_RESULT_SCHEMA_VERSION",
-    "CoupledDynamicsDiagnostics",
-    "CoupledRigidBodyDynamicsResult",
-    "constrained_capabilities",
-    "CONSTRAINED_RESULT_SCHEMA",
-    "CONSTRAINED_RESULT_SCHEMA_VERSION",
-    "SUPPORTED_CONSTRAINED_RESULT_SCHEMA_VERSIONS",
-    "ConstrainedDynamicsDiagnostics",
-    "ConstrainedRigidBodyDynamicsResult",
-    "load_constrained_result_payload",
-    "validate_constrained_result_payload",
-    "HANDOFF_SCHEMA",
-    "HANDOFF_SCHEMA_VERSION",
-    "build_transform_handoff",
-    "transform_handoff_to_json",
-    "validate_transform_handoff",
-    "free_body_capabilities",
-    "load_rigid_body_result_payload",
-    "load_coupled_result_payload",
-    "DYNAMIC_RESULT_SCHEMA",
-    "DYNAMIC_RESULT_SCHEMA_VERSION",
-    "Frame3D",
-    "ParallelAxesJoint3D",
-    "RIGID_BODY_RESULT_SCHEMA",
-    "RIGID_BODY_RESULT_SCHEMA_VERSION",
-    "RigidBodyDynamicsDiagnostics",
-    "RigidBodyLoad",
-    "RigidBodyPairInteraction",
-    "Pose3D",
-    "Quaternion",
-    "RevoluteJoint3D",
-    "SphericalJoint3D",
-    "SpatialBodyHandle",
-    "SpatialCoordinateDrive",
-    "SpatialRevoluteDrive",
-    "SpatialFrameHandle",
-    "SpatialKinematicResult",
-    "SpatialMechanism",
-    "SpatialModelDiagnostics",
-    "SpatialResultDiagnostics",
-    "SpatialResidualSummary",
-    "SpatialBody",
-    "SpatialDynamicsDiagnostics",
-    "SpatialDynamicsResult",
-    "SpatialRigidBodyDynamicsResult",
-    "validate_rigid_body_result_payload",
-    "validate_coupled_result_payload",
-    "SpatialForce",
-    "SpatialModel",
-    "SPATIAL_MODEL_SCHEMA",
-    "SPATIAL_MODEL_SCHEMA_VERSION",
-    "SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS",
-    "compose_pose",
-    "fixed_joint_descriptor_residual",
-    "inverse_pose",
-    "joint_residual_jacobian",
-    "load_spatial_model_payload",
-    "load_spatial_dynamic_result_payload",
-    "load_spatial_kinematic_result_payload",
-    "max_spatial_residual",
-    "point_position",
-    "point_velocity",
-    "quaternion_rate_world",
-    "resolve_frame_pose",
-    "spherical_joint_descriptor_residual",
-    "spherical_joint_residual",
-    "spatial_residual_summary",
-    "spatial_model_from_payload",
-    "validate_spatial_model_payload",
-    "validate_spatial_dynamic_result_payload",
-    "validate_spatial_kinematic_result_payload",
-]
+# Stability (see ``mbsd.stability``): fixed-orientation dynamics moved to
+# ``mbsd.experimental``; the pre-0.9.7 free-body and coupled result types are
+# deprecated. Both stay reachable here with a DeprecationWarning until 1.0.
+from ..stability import DEPRECATED_SPATIAL as _DEPRECATED, EXPERIMENTAL_SPATIAL as _EXPERIMENTAL
+from ..stability import SURFACE as _SURFACE
+
+_MOVED = {name: globals().pop(name) for name in (*_EXPERIMENTAL, *_DEPRECATED)}
+
+__all__ = sorted(
+    name for name, entry in _SURFACE["mbsd.spatial"].items() if entry["status"] == "stable"
+)
+
+
+def __getattr__(name: str):
+    if name in _MOVED:
+        import warnings
+
+        if name in _EXPERIMENTAL:
+            message = (
+                f"mbsd.spatial.{name} is experimental and moved to mbsd.experimental; "
+                "this alias is deprecated and will be removed in 1.0."
+            )
+        else:
+            message = (
+                f"mbsd.spatial.{name} is deprecated and will be removed in 1.0; "
+                "use SpatialMechanism.simulate() and its constrained result."
+            )
+        warnings.warn(message, DeprecationWarning, stacklevel=2)
+        return _MOVED[name]
+    raise AttributeError(f"module 'mbsd.spatial' has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_MOVED))

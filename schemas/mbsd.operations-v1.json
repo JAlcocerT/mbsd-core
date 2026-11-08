@@ -24,6 +24,15 @@
       "summary": "Static description of supported dimensions, joints, drives, solvers and limits."
     },
     {
+      "call": "mbsd.api_surface()",
+      "dimension": null,
+      "errors": [],
+      "inputs": {},
+      "name": "api_surface",
+      "returns": "dict",
+      "summary": "Every public symbol and builder method classified stable, experimental or deprecated, with the versioning, deprecation and schema policies."
+    },
+    {
       "call": "PlanarMechanism.from_json(path)",
       "dimension": 2,
       "errors": [

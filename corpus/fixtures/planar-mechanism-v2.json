@@ -1,0 +1,251 @@
+{
+ "computed": {
+  "engine_torque": [
+   0.49050000000000005,
+   2.051966202729444,
+   1.8795571668138282,
+   0.21616331508104092,
+   -1.1947030092819906,
+   -1.4294090015147303
+  ],
+  "main_force_on_j": [
+   [
+    -62.66666666666667,
+    -55.54653222109198,
+    -36.231360406960036,
+    -10.724995397314636,
+    12.810984882462321,
+    28.75990720592239
+   ],
+   [
+    14.715,
+    8.603590784462469,
+    -0.5174667874412187,
+    -11.810847517449131,
+    -19.590899637844977,
+    -18.68287453756743
+   ]
+  ],
+  "piston_x": [
+   0.4,
+   0.38956791803719454,
+   0.3609677742934056,
+   0.3213901747163684,
+   0.2799378320379132,
+   0.24427302488778666
+  ],
+  "q0": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.1,
+   0.0,
+   0.0,
+   0.4,
+   0.0,
+   0.0
+  ],
+  "t": [
+   0.0,
+   0.02,
+   0.04,
+   0.06,
+   0.08,
+   0.1
+  ]
+ },
+ "fixture": "planar-mechanism-v2",
+ "payload": {
+  "bodies": [
+   {
+    "center_of_mass": [
+     0.0,
+     0.0
+    ],
+    "index": 0,
+    "inertia": 0.0,
+    "mass": 0.0,
+    "name": "ground"
+   },
+   {
+    "center_of_mass": [
+     0.0,
+     0.0
+    ],
+    "index": 1,
+    "inertia": 0.01,
+    "mass": 1.0,
+    "name": "crank"
+   },
+   {
+    "center_of_mass": [
+     0.0,
+     0.0
+    ],
+    "index": 2,
+    "inertia": 0.02,
+    "mass": 0.5,
+    "name": "rod"
+   },
+   {
+    "center_of_mass": [
+     0.0,
+     0.0
+    ],
+    "index": 3,
+    "inertia": 0.001,
+    "mass": 0.8,
+    "name": "piston"
+   }
+  ],
+  "conventions": {
+   "array_layout": "component_by_time",
+   "body_points": "body_local_xy",
+   "coordinates": [
+    "x",
+    "y",
+    "theta"
+   ],
+   "reference_frame": "inertial_xy",
+   "rotation": "counterclockwise_positive"
+  },
+  "counts": {
+   "bodies": 4,
+   "constraints": 12,
+   "coordinates": 12,
+   "point_on_line_joints": 0,
+   "prismatic_joints": 1,
+   "revolute_joints": 3,
+   "user_constraints": 1
+  },
+  "dimension": 2,
+  "forces": {
+   "custom": [],
+   "gravity": [
+    0.0,
+    -9.81
+   ],
+   "loads": [],
+   "springs": []
+  },
+  "gravity": [
+   0.0,
+   -9.81
+  ],
+  "joints": {
+   "point_on_line": [],
+   "prismatic": [
+    {
+     "axis": [
+      1.0,
+      0.0
+     ],
+     "index": 0,
+     "name": "bore",
+     "normal": [
+      -0.0,
+      1.0
+     ],
+     "point_rail": [
+      0.0,
+      0.0
+     ],
+     "point_slider": [
+      0.0,
+      0.0
+     ],
+     "rail_body": 0,
+     "slider_body": 3
+    }
+   ],
+   "revolute": [
+    {
+     "body_i": 0,
+     "body_j": 1,
+     "index": 0,
+     "name": "main",
+     "point_i": [
+      0.0,
+      0.0
+     ],
+     "point_j": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "body_i": 1,
+     "body_j": 2,
+     "index": 1,
+     "name": "crankpin",
+     "point_i": [
+      0.1,
+      0.0
+     ],
+     "point_j": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "body_i": 2,
+     "body_j": 3,
+     "index": 2,
+     "name": "wristpin",
+     "point_i": [
+      0.3,
+      0.0
+     ],
+     "point_j": [
+      0.0,
+      0.0
+     ]
+    }
+   ]
+  },
+  "mbsd_version": "0.9.7",
+  "metadata": {},
+  "portable": true,
+  "schema": "mbsd.planar.mechanism",
+  "schema_version": 2,
+  "units": {
+   "angle": "rad",
+   "angular_acceleration": "rad/s^2",
+   "angular_velocity": "rad/s",
+   "damping": "N*s/m",
+   "force": "N",
+   "inertia": "kg*m^2",
+   "length": "m",
+   "linear_acceleration": "m/s^2",
+   "linear_velocity": "m/s",
+   "mass": "kg",
+   "spring_stiffness": "N/m",
+   "time": "s",
+   "torque": "N*m"
+  },
+  "user_constraints": [
+   {
+    "body": 1,
+    "coordinate": "theta",
+    "count": 1,
+    "index": 0,
+    "kind": "motor",
+    "law": {
+     "kind": "constant_speed",
+     "rate": 20.0,
+     "start": 0.0
+    },
+    "name": "engine",
+    "omega": 20.0,
+    "phase": 0.0,
+    "portable": true
+   }
+  ]
+ },
+ "produced_by": "mbsd 0.9.7",
+ "schema": "mbsd.planar.mechanism",
+ "schema_version": 2
+}

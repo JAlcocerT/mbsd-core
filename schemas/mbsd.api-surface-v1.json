@@ -1,0 +1,841 @@
+{
+  "namespaces": {
+    "mbsd": {
+      "ConstantSpeed": {
+        "status": "stable"
+      },
+      "Mechanism": {
+        "status": "stable"
+      },
+      "MechanismSolveError": {
+        "status": "stable"
+      },
+      "NotPortableError": {
+        "status": "stable"
+      },
+      "Polynomial": {
+        "status": "stable"
+      },
+      "Spring": {
+        "status": "stable"
+      },
+      "Tabulated": {
+        "status": "stable"
+      },
+      "api_surface": {
+        "status": "stable"
+      },
+      "capabilities": {
+        "status": "stable"
+      },
+      "operation_manifest": {
+        "status": "stable"
+      }
+    },
+    "mbsd.errors": {
+      "MechanismSolveError": {
+        "status": "stable"
+      },
+      "NotPortableError": {
+        "status": "stable"
+      }
+    },
+    "mbsd.experimental": {
+      "DYNAMIC_RESULT_SCHEMA": {
+        "status": "experimental"
+      },
+      "DYNAMIC_RESULT_SCHEMA_VERSION": {
+        "status": "experimental"
+      },
+      "SpatialDynamicsDiagnostics": {
+        "status": "experimental"
+      },
+      "SpatialDynamicsResult": {
+        "status": "experimental"
+      },
+      "SpatialForce": {
+        "status": "experimental"
+      },
+      "constraint_groups": {
+        "status": "experimental"
+      },
+      "load_spatial_dynamic_result_payload": {
+        "status": "experimental"
+      },
+      "validate_spatial_dynamic_result_payload": {
+        "status": "experimental"
+      }
+    },
+    "mbsd.planar": {
+      "AffineFit": {
+        "status": "stable"
+      },
+      "BodyHandle": {
+        "status": "stable"
+      },
+      "Check": {
+        "status": "stable"
+      },
+      "CheckReport": {
+        "status": "stable"
+      },
+      "ConfigurationDiagnostics": {
+        "status": "stable"
+      },
+      "ConstantSpeed": {
+        "status": "stable"
+      },
+      "DynamicsResult": {
+        "status": "stable"
+      },
+      "FourBar": {
+        "status": "stable"
+      },
+      "FourBarPose": {
+        "status": "stable"
+      },
+      "InverseDynamicsResult": {
+        "status": "stable"
+      },
+      "Issue": {
+        "status": "stable"
+      },
+      "JointLoads": {
+        "status": "stable"
+      },
+      "KinematicResult": {
+        "status": "stable"
+      },
+      "Mechanism": {
+        "status": "stable"
+      },
+      "MechanismSolveError": {
+        "status": "stable"
+      },
+      "ModelDiagnostics": {
+        "status": "stable"
+      },
+      "MotionLaw": {
+        "status": "stable"
+      },
+      "PlanarMechanism": {
+        "status": "stable"
+      },
+      "Polynomial": {
+        "status": "stable"
+      },
+      "ResultDiagnostics": {
+        "status": "stable"
+      },
+      "Spring": {
+        "status": "stable"
+      },
+      "Tabulated": {
+        "status": "stable"
+      },
+      "ValidationReport": {
+        "status": "stable"
+      },
+      "analysis": {
+        "status": "stable"
+      },
+      "joint_loads_to_dict": {
+        "status": "stable"
+      },
+      "joint_loads_to_json": {
+        "status": "stable"
+      },
+      "mechanism_from_dict": {
+        "status": "stable"
+      },
+      "mechanism_from_json": {
+        "status": "stable"
+      },
+      "mechanism_to_dict": {
+        "status": "stable"
+      },
+      "mechanism_to_json": {
+        "status": "stable"
+      },
+      "point_trace_to_csv": {
+        "status": "stable"
+      },
+      "point_trace_to_dict": {
+        "status": "stable"
+      },
+      "point_trace_to_json": {
+        "status": "stable"
+      },
+      "result_to_csv": {
+        "status": "stable"
+      },
+      "result_to_dict": {
+        "status": "stable"
+      },
+      "result_to_json": {
+        "status": "stable"
+      }
+    },
+    "mbsd.planar.PlanarMechanism": {
+      "assert_constraints_satisfied": {
+        "status": "stable"
+      },
+      "body": {
+        "status": "stable"
+      },
+      "capabilities": {
+        "status": "stable"
+      },
+      "check": {
+        "status": "stable"
+      },
+      "configuration_diagnostics": {
+        "status": "stable"
+      },
+      "constant_force": {
+        "status": "stable"
+      },
+      "constant_torque": {
+        "status": "stable"
+      },
+      "constraint_residual": {
+        "status": "stable"
+      },
+      "constraint_residuals": {
+        "status": "stable"
+      },
+      "coordinate_drive": {
+        "status": "stable"
+      },
+      "diagnostics": {
+        "status": "stable"
+      },
+      "distance_drive": {
+        "status": "stable"
+      },
+      "force": {
+        "status": "stable"
+      },
+      "from_dict": {
+        "status": "stable"
+      },
+      "from_json": {
+        "status": "stable"
+      },
+      "gear": {
+        "status": "stable"
+      },
+      "ground": {
+        "status": "stable"
+      },
+      "inverse_dynamics": {
+        "status": "stable"
+      },
+      "joint_loads": {
+        "status": "stable"
+      },
+      "joint_loads_to_dict": {
+        "status": "stable"
+      },
+      "joint_loads_to_json": {
+        "status": "stable"
+      },
+      "loads": {
+        "status": "stable"
+      },
+      "max_constraint_residual": {
+        "status": "stable"
+      },
+      "model": {
+        "status": "stable"
+      },
+      "model_diagnostics": {
+        "status": "stable"
+      },
+      "motor": {
+        "status": "stable"
+      },
+      "ncoord": {
+        "status": "stable"
+      },
+      "nrestr": {
+        "status": "stable"
+      },
+      "pin": {
+        "status": "stable"
+      },
+      "point_on_line": {
+        "status": "stable"
+      },
+      "point_trace_to_csv": {
+        "status": "stable"
+      },
+      "point_trace_to_dict": {
+        "status": "stable"
+      },
+      "point_trace_to_json": {
+        "status": "stable"
+      },
+      "rack": {
+        "status": "stable"
+      },
+      "result_to_csv": {
+        "status": "stable"
+      },
+      "result_to_dict": {
+        "status": "stable"
+      },
+      "result_to_json": {
+        "status": "stable"
+      },
+      "simulate": {
+        "status": "stable"
+      },
+      "slider": {
+        "status": "stable"
+      },
+      "solve_kinematics": {
+        "status": "stable"
+      },
+      "solve_position": {
+        "status": "stable"
+      },
+      "solve_velocity": {
+        "status": "stable"
+      },
+      "spring": {
+        "status": "stable"
+      },
+      "springs": {
+        "status": "stable"
+      },
+      "tabulated_force": {
+        "status": "stable"
+      },
+      "tabulated_torque": {
+        "status": "stable"
+      },
+      "to_dict": {
+        "status": "stable"
+      },
+      "to_json": {
+        "status": "stable"
+      },
+      "validate": {
+        "status": "stable"
+      }
+    },
+    "mbsd.planar.analysis": {
+      "ConstraintGroup": {
+        "status": "stable"
+      },
+      "acceleration_residual": {
+        "status": "stable"
+      },
+      "body_vector": {
+        "status": "stable"
+      },
+      "constraint_groups": {
+        "status": "stable"
+      },
+      "constraint_jacobian": {
+        "status": "stable"
+      },
+      "constraint_residual": {
+        "status": "stable"
+      },
+      "constraint_second_time_derivative": {
+        "status": "stable"
+      },
+      "constraint_time_derivative": {
+        "status": "stable"
+      },
+      "equation_of_motion_residual": {
+        "status": "stable"
+      },
+      "generalized_forces": {
+        "status": "stable"
+      },
+      "jacobian_rate": {
+        "status": "stable"
+      },
+      "mass_matrix": {
+        "status": "stable"
+      },
+      "point_acceleration": {
+        "status": "stable"
+      },
+      "point_position": {
+        "status": "stable"
+      },
+      "point_velocity": {
+        "status": "stable"
+      },
+      "rotation_matrix": {
+        "status": "stable"
+      }
+    },
+    "mbsd.reports": {
+      "Check": {
+        "status": "stable"
+      },
+      "CheckReport": {
+        "status": "stable"
+      },
+      "Issue": {
+        "status": "stable"
+      },
+      "ValidationReport": {
+        "status": "stable"
+      }
+    },
+    "mbsd.spatial": {
+      "CONSTRAINED_RESULT_SCHEMA": {
+        "status": "stable"
+      },
+      "CONSTRAINED_RESULT_SCHEMA_VERSION": {
+        "status": "stable"
+      },
+      "COUPLED_RESULT_SCHEMA": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "COUPLED_RESULT_SCHEMA_VERSION": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "ConsistentVelocities": {
+        "status": "stable"
+      },
+      "ConstrainedDynamicsDiagnostics": {
+        "status": "stable"
+      },
+      "ConstrainedRigidBodyDynamicsResult": {
+        "status": "stable"
+      },
+      "CoupledDynamicsDiagnostics": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "CoupledRigidBodyDynamicsResult": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "FixedJoint3D": {
+        "status": "stable"
+      },
+      "Frame3D": {
+        "status": "stable"
+      },
+      "HANDOFF_SCHEMA": {
+        "status": "stable"
+      },
+      "HANDOFF_SCHEMA_VERSION": {
+        "status": "stable"
+      },
+      "ParallelAxesJoint3D": {
+        "status": "stable"
+      },
+      "Pose3D": {
+        "status": "stable"
+      },
+      "Quaternion": {
+        "status": "stable"
+      },
+      "RIGID_BODY_RESULT_SCHEMA": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "RIGID_BODY_RESULT_SCHEMA_VERSION": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "RevoluteJoint3D": {
+        "status": "stable"
+      },
+      "RigidBodyDynamicsDiagnostics": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "RigidBodyLoad": {
+        "status": "stable"
+      },
+      "RigidBodyPairInteraction": {
+        "status": "stable"
+      },
+      "SPATIAL_MODEL_SCHEMA": {
+        "status": "stable"
+      },
+      "SPATIAL_MODEL_SCHEMA_VERSION": {
+        "status": "stable"
+      },
+      "SUPPORTED_CONSTRAINED_RESULT_SCHEMA_VERSIONS": {
+        "status": "stable"
+      },
+      "SUPPORTED_SPATIAL_MODEL_SCHEMA_VERSIONS": {
+        "status": "stable"
+      },
+      "SpatialBody": {
+        "status": "stable"
+      },
+      "SpatialBodyHandle": {
+        "status": "stable"
+      },
+      "SpatialCoordinateDrive": {
+        "status": "stable"
+      },
+      "SpatialFrameHandle": {
+        "status": "stable"
+      },
+      "SpatialKinematicResult": {
+        "status": "stable"
+      },
+      "SpatialMechanism": {
+        "status": "stable"
+      },
+      "SpatialModel": {
+        "status": "stable"
+      },
+      "SpatialModelDiagnostics": {
+        "status": "stable"
+      },
+      "SpatialResidualSummary": {
+        "status": "stable"
+      },
+      "SpatialResultDiagnostics": {
+        "status": "stable"
+      },
+      "SpatialRevoluteDrive": {
+        "status": "stable"
+      },
+      "SpatialRigidBodyDynamicsResult": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "SphericalJoint3D": {
+        "status": "stable"
+      },
+      "build_transform_handoff": {
+        "status": "stable"
+      },
+      "compose_pose": {
+        "status": "stable"
+      },
+      "constrained_capabilities": {
+        "status": "stable"
+      },
+      "coupled_capabilities": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "fixed_joint_descriptor_residual": {
+        "status": "stable"
+      },
+      "free_body_capabilities": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "inverse_pose": {
+        "status": "stable"
+      },
+      "joint_residual_jacobian": {
+        "status": "stable"
+      },
+      "load_constrained_result_payload": {
+        "status": "stable"
+      },
+      "load_coupled_result_payload": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "load_rigid_body_result_payload": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "load_spatial_kinematic_result_payload": {
+        "status": "stable"
+      },
+      "load_spatial_model_payload": {
+        "status": "stable"
+      },
+      "max_spatial_residual": {
+        "status": "stable"
+      },
+      "point_position": {
+        "status": "stable"
+      },
+      "point_velocity": {
+        "status": "stable"
+      },
+      "quaternion_rate_world": {
+        "status": "stable"
+      },
+      "resolve_frame_pose": {
+        "status": "stable"
+      },
+      "spatial_model_from_payload": {
+        "status": "stable"
+      },
+      "spatial_residual_summary": {
+        "status": "stable"
+      },
+      "spherical_joint_descriptor_residual": {
+        "status": "stable"
+      },
+      "spherical_joint_residual": {
+        "status": "stable"
+      },
+      "transform_handoff_to_json": {
+        "status": "stable"
+      },
+      "validate_constrained_result_payload": {
+        "status": "stable"
+      },
+      "validate_coupled_result_payload": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "validate_rigid_body_result_payload": {
+        "removal": "1.0.0",
+        "replacement": "SpatialMechanism.simulate() and its constrained result",
+        "status": "deprecated"
+      },
+      "validate_spatial_kinematic_result_payload": {
+        "status": "stable"
+      },
+      "validate_spatial_model_payload": {
+        "status": "stable"
+      },
+      "validate_transform_handoff": {
+        "status": "stable"
+      }
+    },
+    "mbsd.spatial.SpatialMechanism": {
+      "body": {
+        "status": "stable"
+      },
+      "capabilities": {
+        "status": "stable"
+      },
+      "check": {
+        "status": "stable"
+      },
+      "consistent_velocities": {
+        "status": "stable"
+      },
+      "constrained_diagnostics": {
+        "status": "stable"
+      },
+      "constrained_result_to_dict": {
+        "status": "stable"
+      },
+      "constrained_result_to_json": {
+        "status": "stable"
+      },
+      "constraint_jacobian": {
+        "status": "stable"
+      },
+      "constraint_layout": {
+        "status": "stable"
+      },
+      "constraint_residual": {
+        "status": "stable"
+      },
+      "constraint_second_time_derivative": {
+        "status": "stable"
+      },
+      "constraint_time_derivative": {
+        "status": "stable"
+      },
+      "coordinate_drive": {
+        "status": "stable"
+      },
+      "coupled_diagnostics": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "coupled_result_to_dict": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "coupled_result_to_json": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "diagnostics": {
+        "status": "stable"
+      },
+      "drive_efforts": {
+        "status": "stable"
+      },
+      "dynamics_constraint_groups": {
+        "status": "experimental"
+      },
+      "dynamics_diagnostics": {
+        "status": "experimental"
+      },
+      "dynamics_result_to_dict": {
+        "status": "experimental"
+      },
+      "dynamics_result_to_json": {
+        "status": "experimental"
+      },
+      "excitation_id": {
+        "status": "stable"
+      },
+      "fixed": {
+        "status": "stable"
+      },
+      "force": {
+        "status": "experimental"
+      },
+      "frame": {
+        "status": "stable"
+      },
+      "from_dict": {
+        "status": "stable"
+      },
+      "from_json": {
+        "status": "stable"
+      },
+      "from_spatial_model": {
+        "status": "stable"
+      },
+      "ground": {
+        "status": "stable"
+      },
+      "model_diagnostics": {
+        "status": "stable"
+      },
+      "model_id": {
+        "status": "stable"
+      },
+      "nbody": {
+        "status": "stable"
+      },
+      "ncoord": {
+        "status": "stable"
+      },
+      "pair_interaction": {
+        "status": "stable"
+      },
+      "parallel_axes": {
+        "status": "stable"
+      },
+      "portable": {
+        "status": "stable"
+      },
+      "redundant_constraints": {
+        "status": "stable"
+      },
+      "result_diagnostics": {
+        "status": "stable"
+      },
+      "result_to_dict": {
+        "status": "stable"
+      },
+      "result_to_json": {
+        "status": "stable"
+      },
+      "revolute": {
+        "status": "stable"
+      },
+      "revolute_drive": {
+        "status": "stable"
+      },
+      "rigid_body_diagnostics": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "rigid_body_load": {
+        "status": "stable"
+      },
+      "rigid_body_result_to_dict": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "rigid_body_result_to_json": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "simulate": {
+        "status": "stable"
+      },
+      "simulate_constrained_rigid_bodies": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "simulate_coupled_rigid_bodies": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "simulate_fixed_orientation": {
+        "status": "experimental"
+      },
+      "simulate_free_body": {
+        "removal": "1.0.0",
+        "replacement": "simulate(), constrained_result_to_dict()",
+        "status": "deprecated"
+      },
+      "solve_kinematics": {
+        "status": "stable"
+      },
+      "solve_position": {
+        "status": "stable"
+      },
+      "solve_velocity": {
+        "status": "stable"
+      },
+      "spherical": {
+        "status": "stable"
+      },
+      "to_dict": {
+        "status": "stable"
+      },
+      "to_json": {
+        "status": "stable"
+      },
+      "to_spatial_model": {
+        "status": "stable"
+      },
+      "validate": {
+        "status": "stable"
+      }
+    }
+  },
+  "policies": {
+    "deprecation": "deprecated symbols warn (DeprecationWarning) and are removed no earlier than the next major release; 0.x deprecations are removed in 1.0.0",
+    "experimental": "experimental symbols may change in a minor release and are excluded from the stable claim",
+    "internal": "modules and names not listed here carry no promise",
+    "schemas": "schema versions are independent of the package version; changes are additive within a version, anything else is a new version; readers reject unknown versions; every emitted version stays readable for at least one major release",
+    "versioning": "semver_from_1.0: stable breaking changes need a major release"
+  },
+  "schema": "mbsd.api_surface",
+  "schema_version": 1,
+  "statuses": [
+    "stable",
+    "experimental",
+    "deprecated"
+  ]
+}

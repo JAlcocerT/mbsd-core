@@ -121,6 +121,15 @@ def operation_manifest() -> dict[str, Any]:
                 dimension=None,
             ),
             _op(
+                "api_surface",
+                "mbsd.api_surface()",
+                "Every public symbol and builder method classified stable, experimental or "
+                "deprecated, with the versioning, deprecation and schema policies.",
+                {},
+                "dict",
+                dimension=None,
+            ),
+            _op(
                 "load",
                 "PlanarMechanism.from_json(path)",
                 "Rebuild a planar mechanism from a portable mbsd.planar.mechanism payload.",

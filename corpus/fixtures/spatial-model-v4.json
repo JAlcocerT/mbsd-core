@@ -1,0 +1,239 @@
+{
+ "computed": {
+  "com_y": [
+   0.0,
+   -0.001401426369513045,
+   -0.00560557336466453,
+   -0.012611252074448288,
+   -0.02241384046784165,
+   -0.03500133168964001
+  ],
+  "t": [
+   0.0,
+   0.02,
+   0.04,
+   0.06,
+   0.08,
+   0.1
+  ]
+ },
+ "fixture": "spatial-model-v4",
+ "payload": {
+  "bodies": [
+   {
+    "center_of_mass": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "id": "body:ground",
+    "index": 0,
+    "inertia": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "mass": 1.0,
+    "name": "ground",
+    "pose": {
+     "rotation": {
+      "w": 1.0,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+     },
+     "translation": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   {
+    "center_of_mass": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "id": "body:arm",
+    "index": 1,
+    "inertia": [
+     0.01,
+     0.2,
+     0.2
+    ],
+    "mass": 2.0,
+    "name": "arm",
+    "pose": {
+     "rotation": {
+      "w": 1.0,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+     },
+     "translation": [
+      0.5,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  ],
+  "capabilities": {
+   "fixed_joint_residual": true,
+   "general_spatial_solver": false,
+   "joint_residual_jacobian": {
+    "fixed": "analytic",
+    "parallel_axes": "analytic",
+    "revolute": "analytic",
+    "spherical": "analytic"
+   },
+   "parallel_axes_residual": true,
+   "point_position": true,
+   "point_velocity": true,
+   "pose_transforms": true,
+   "revolute_joint_residual": true,
+   "spatial_dynamics": false,
+   "spherical_joint_residual": true
+  },
+  "conventions": {
+   "body_pose": "body_to_world",
+   "fixed_joint_frames": "body_local; world_when_body_is_null",
+   "frame_pose": "parent_body_local; world_when_parent_body_is_null",
+   "inertia": "principal_moments_about_com_in_body_frame",
+   "joint_points": "body_local_xyz; world_xyz_when_body_is_null",
+   "parallel_axes_frames": "body_local; world_when_body_is_null; local_z axes kept parallel",
+   "quaternion_order": [
+    "w",
+    "x",
+    "y",
+    "z"
+   ],
+   "revolute_joint_frames": "body_local; world_when body is null; local_z is free",
+   "rotation": "active_body_to_world",
+   "world_frame": "right_handed_xyz"
+  },
+  "dimension": 3,
+  "frames": [],
+  "joints": [
+   {
+    "body_i": 0,
+    "body_j": 1,
+    "frame_i": {
+     "rotation": {
+      "w": 1.0,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+     },
+     "translation": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "frame_j": {
+     "rotation": {
+      "w": 1.0,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+     },
+     "translation": [
+      -0.5,
+      0.0,
+      0.0
+     ]
+    },
+    "free_axis": "local_z",
+    "id": "joint:hinge",
+    "index": 0,
+    "kind": "revolute",
+    "name": "hinge"
+   }
+  ],
+  "mbsd_version": "0.9.7",
+  "metadata": {
+   "builder": "Mechanism.spatial",
+   "drives": [],
+   "ground_body": 0,
+   "portable": true,
+   "revolute_drives": []
+  },
+  "model_id": "2247e1e332b8f85f",
+  "model_id_scope": "structure_excluding_runtime_drive_callbacks",
+  "schema": "mbsd.spatial.model",
+  "schema_version": 4,
+  "solver_capabilities": {
+   "constrained_rotational_dynamics": true,
+   "constrained_spatial_dynamics": true,
+   "coupled_six_dof_rigid_body_dynamics": true,
+   "deprecated_entry_points": [
+    "simulate_free_body",
+    "simulate_coupled_rigid_bodies",
+    "simulate_constrained_rigid_bodies"
+   ],
+   "drive_coordinates": [
+    "x",
+    "y",
+    "z"
+   ],
+   "drive_kinds": [
+    "coordinate_drive",
+    "revolute_drive"
+   ],
+   "dynamics_entry_point": "simulate",
+   "fixed_orientation_translational_dynamics": true,
+   "free_body_rotational_dynamics": true,
+   "general_spatial_dynamics": false,
+   "joint_types": [
+    "spherical",
+    "fixed",
+    "revolute"
+   ],
+   "orientation_primitives": [
+    "parallel_axes"
+   ],
+   "position_solve": true,
+   "redundant_constraints": "rejected_by_validate",
+   "restricted_entry_points": [
+    "simulate_fixed_orientation"
+   ],
+   "solver_kinds": {
+    "constrained_six_dof": {
+     "constraints": true,
+     "multiple_bodies": true,
+     "rotation": true
+    },
+    "coupled_six_dof": {
+     "constraints": false,
+     "multiple_bodies": true,
+     "rotation": true
+    },
+    "fixed_orientation": {
+     "constraints": true,
+     "multiple_bodies": true,
+     "rotation": false
+    },
+    "free_body": {
+     "constraints": false,
+     "multiple_bodies": false,
+     "rotation": true
+    }
+   },
+   "spatial_dynamics": false,
+   "velocity_frame": "world",
+   "velocity_solve": true
+  },
+  "status": "experimental",
+  "units": {
+   "angle": "rad",
+   "inertia": "kg*m^2",
+   "length": "m",
+   "mass": "kg"
+  }
+ },
+ "produced_by": "mbsd 0.9.7",
+ "schema": "mbsd.spatial.model",
+ "schema_version": 4
+}

@@ -1,8 +1,12 @@
 {
-  "release": "0.9.7",
-  "core_ref": "v0.9.7",
-  "examples_ref": "v0.9.7",
-  "examples_core_range": ">=0.9.7,<0.10",
+  "release": "0.9.8",
+  "status": "release_candidate",
+  "core_ref": "v0.9.8",
+  "examples_ref": "v0.9.8",
+  "examples_core_range": ">=0.9.8,<0.10",
+  "python": ["3.10", "3.11", "3.12", "3.13"],
+  "dependencies": {"numpy": ">=2.0,<3.0", "scipy": ">=1.13,<2.0"},
+  "reference_consumer": {"engine": "blender", "version": "5.1", "fixtures": "mbsd-examples/fixtures/interop"},
   "schemas": {
     "mbsd.planar.mechanism": {
       "emitted": 3,
@@ -26,6 +30,14 @@
     "mbsd.capabilities": {
       "emitted": 1
     },
+    "mbsd.api_surface": {
+      "emitted": 1,
+      "file": "schemas/mbsd.api-surface-v1.json"
+    },
+    "mbsd.validation_corpus": {
+      "emitted": 1,
+      "file": "corpus/expected-v1.json"
+    },
     "mbsd.spatial.model": {
       "emitted": 4,
       "readable": [1, 2, 3, 4],
@@ -46,7 +58,8 @@
       "emitted": 2,
       "readable": [2],
       "validation": "structural_and_semantic",
-      "capability": "fixed_orientation_translational_dynamics"
+      "capability": "fixed_orientation_translational_dynamics",
+      "status": "experimental"
     },
     "mbsd.spatial.free_rigid_body_dynamic_result": {
       "emitted": 1,
@@ -73,7 +86,7 @@
       "emitted": 1,
       "readable": [1],
       "validation": "structural_and_semantic",
-      "consumers": ["freecad_reference", "blender_reference", "browser_reference"]
+      "consumers": ["blender_consumer", "freecad_reference", "blender_reference", "browser_reference"]
     }
   }
 }

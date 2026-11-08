@@ -18,12 +18,21 @@ and CAD-specific integrations remain separate while the API stabilizes.
 Portable JSON and CSV exports support downstream applications and neutral CAD
 handoffs.
 
+**0.9.8 is the 1.0 release candidate.** Its public surface is frozen and
+classified (`mbsd.api_surface()`; see [STABILITY.md](STABILITY.md) for the
+stable / experimental / deprecated classes, the versioning, deprecation and
+schema policies, compatibility tables and migration notes). The candidate
+period and every reported incompatibility are logged in
+[CANDIDATE.md](CANDIDATE.md). A versioned validation corpus
+(`corpus/`, `uv run python corpus/run.py`) records expected results,
+tolerances, solver settings and provenance for every stable capability.
+
 ## Install
 
 ```bash
 git clone https://github.com/JAlcocerT/mbsd-core.git
 cd mbsd-core
-git checkout v0.9.7
+git checkout v0.9.8
 uv sync --extra dev
 ```
 

@@ -1,0 +1,793 @@
+{
+ "cases": {
+  "planar.baumgarte_drift": {
+   "check": true,
+   "description": "Double pendulum: Baumgarte stabilization keeps the constraint drift small.",
+   "dimension": 2,
+   "errors": {
+    "stabilized_drift_m": {
+     "bound": 1e-07,
+     "value": 2.0528176936096543e-09
+    }
+   },
+   "family": "planar_stabilization",
+   "id": "planar.baumgarte_drift",
+   "reference": "constraint drift of a chaotic double pendulum with and without Baumgarte (short #4)",
+   "settings": {
+    "alpha_baumgarte": 60.0,
+    "atol": 1e-09,
+    "beta_baumgarte": 60.0,
+    "duration_s": 3.0,
+    "method": "RK45",
+    "rtol": 1e-07,
+    "solver": "simulate"
+   },
+   "values": {
+    "unstabilized_drift_m": 3.3718432179696833e-07
+   }
+  },
+  "planar.check_fails_on_loose_tolerance": {
+   "check": false,
+   "description": "Failing verdict: the same double pendulum integrated far too loosely.",
+   "dimension": 2,
+   "errors": {},
+   "family": "check_verdicts",
+   "id": "planar.check_fails_on_loose_tolerance",
+   "reference": "check() must reject a result whose integration tolerance is too loose",
+   "settings": {
+    "atol": 0.01,
+    "duration_s": 3.0,
+    "method": "RK23",
+    "rtol": 0.01,
+    "solver": "simulate"
+   },
+   "values": {
+    "failed_checks": 3.0
+   }
+  },
+  "planar.distance_drive_boom": {
+   "check": true,
+   "description": "Boom lifted by a portable hydraulic cylinder (distance_drive).",
+   "dimension": 2,
+   "errors": {
+    "frame_force_N": {
+     "bound": 1e-07,
+     "value": 2.2737367544323206e-13
+    },
+    "frame_moment_Nm": {
+     "bound": 1e-07,
+     "value": 4.547473508864641e-13
+    },
+    "power_balance_W": {
+     "bound": 1e-07,
+     "value": 2.987193825632062e-14
+    }
+   },
+   "family": "planar_reactions",
+   "id": "planar.distance_drive_boom",
+   "reference": "Newton-Euler on the frame including the actuator base reaction; multiplier identity",
+   "settings": {
+    "duration_s": 2.0,
+    "samples": 21,
+    "solver": "inverse_dynamics"
+   },
+   "values": {
+    "peak_cylinder_force_N": 2262.026972754822
+   }
+  },
+  "planar.gear_train_power": {
+   "check": true,
+   "description": "Pinion driving a wheel through an external mesh (gear).",
+   "dimension": 2,
+   "errors": {
+    "frame_moment_Nm": {
+     "bound": 1e-12,
+     "value": 5.551115123125783e-17
+    },
+    "power_balance_W": {
+     "bound": 1e-12,
+     "value": 1.1102230246251565e-16
+    },
+    "ratio_rad": {
+     "bound": 1e-12,
+     "value": 2.7755575615628914e-17
+    }
+   },
+   "family": "planar_meshes",
+   "id": "planar.gear_train_power",
+   "reference": "gear ratio kinematics; motor power = dKE/dt; frame moment = -dH/dt",
+   "settings": {
+    "duration_s": 1.0,
+    "samples": 11,
+    "solver": "inverse_dynamics"
+   },
+   "values": {
+    "motor_torque_Nm": 0.21333333333333332,
+    "wheel_tooth_torque_Nm": -0.39999999999999997
+   }
+  },
+  "planar.offset_com_pendulum": {
+   "check": true,
+   "description": "Compound pendulum with an offset COM, released horizontally.",
+   "dimension": 2,
+   "errors": {
+    "alpha_rad_s2": {
+     "bound": 1e-09,
+     "value": 1.5987211554602254e-14
+    },
+    "energy_drift_J": {
+     "bound": 1e-08,
+     "value": 7.291807158082975e-10
+    }
+   },
+   "family": "planar_forward_dynamics",
+   "id": "planar.offset_com_pendulum",
+   "reference": "analytic angular acceleration of a compound pendulum; energy conservation",
+   "settings": {
+    "atol": 1e-13,
+    "duration_s": 1.0,
+    "method": "RK45",
+    "rtol": 1e-11,
+    "solver": "simulate"
+   },
+   "values": {
+    "theta_end_rad": -2.741114305734002
+   }
+  },
+  "planar.point_on_line_follower": {
+   "check": true,
+   "description": "Rocker tip riding on a valve stem (point_on_line) against a preload.",
+   "dimension": 2,
+   "errors": {
+    "tangential_tip_force_N": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "tip_moment_Nm": {
+     "bound": 1e-09,
+     "value": 0.0
+    }
+   },
+   "family": "planar_reactions",
+   "id": "planar.point_on_line_follower",
+   "reference": "normal reaction of the line only; Newton-Euler on the frame",
+   "settings": {
+    "duration_s": 0.4,
+    "samples": 9,
+    "solver": "inverse_dynamics"
+   },
+   "values": {
+    "peak_tip_force_N": 51.001000000000005
+   }
+  },
+  "planar.quick_return_ratio": {
+   "check": true,
+   "description": "Crank-and-slotted-lever quick return: forward / return time ratio.",
+   "dimension": 2,
+   "errors": {
+    "time_ratio": {
+     "bound": 1e-06,
+     "value": 6.554756737386924e-12
+    }
+   },
+   "family": "planar_kinematics",
+   "id": "planar.quick_return_ratio",
+   "reference": "crank-and-slotted-lever time ratio (pi + 2 asin(r/d)) / (pi - 2 asin(r/d)) (short #8)",
+   "settings": {
+    "samples": 4801,
+    "solver": "solve_kinematics",
+    "turns": 4
+   },
+   "values": {
+    "time_ratio": 1.7099527817148559
+   }
+  },
+  "planar.rack_pinion": {
+   "check": true,
+   "description": "Pinion accelerating a guided rack under gravity.",
+   "dimension": 2,
+   "errors": {
+    "frame_force_N": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "frame_moment_Nm": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "rack_position_m": {
+     "bound": 1e-12,
+     "value": 6.938893903907228e-18
+    },
+    "tooth_force_N": {
+     "bound": 1e-10,
+     "value": 2.220446049250313e-16
+    }
+   },
+   "family": "planar_meshes",
+   "id": "planar.rack_pinion",
+   "reference": "rack kinematics x = r theta; tooth force m a; Newton-Euler on the frame",
+   "settings": {
+    "duration_s": 0.5,
+    "samples": 11,
+    "solver": "inverse_dynamics"
+   },
+   "values": {
+    "motor_torque_Nm": 0.135
+   }
+  },
+  "planar.relative_drive_momentum": {
+   "check": true,
+   "description": "Reaction wheel driven relative to a free platform (short #4).",
+   "dimension": 2,
+   "errors": {
+    "frame_moment_Nm": {
+     "bound": 1e-10,
+     "value": 0.0
+    },
+    "momentum_Nms": {
+     "bound": 1e-10,
+     "value": 2.220446049250313e-16
+    },
+    "power_balance_W": {
+     "bound": 1e-09,
+     "value": 8.881784197001252e-16
+    }
+   },
+   "family": "planar_forward_dynamics",
+   "id": "planar.relative_drive_momentum",
+   "reference": "angular-momentum conservation with an internal motor; power = dKE/dt",
+   "settings": {
+    "atol": 1e-13,
+    "duration_s": 1.0,
+    "rtol": 1e-11,
+    "solver": "simulate"
+   },
+   "values": {
+    "stator_rate_end_rad_s": -1.3333333333333344
+   }
+  },
+  "planar.reverser_frame_torque": {
+   "check": null,
+   "description": "Counter-rotating paddle sets through a reverser on the frame.",
+   "dimension": 2,
+   "errors": {
+    "opposite_frame_torque_Nm": {
+     "bound": 1e-12,
+     "value": 0.0
+    },
+    "same_minus_2I_alpha_Nm": {
+     "bound": 1e-12,
+     "value": 0.0
+    }
+   },
+   "family": "planar_meshes",
+   "id": "planar.reverser_frame_torque",
+   "reference": "equal and opposite inertia torques cancel on the frame (short #5)",
+   "settings": {
+    "duration_s": 1.0,
+    "samples": 6,
+    "solver": "inverse_dynamics"
+   },
+   "values": {
+    "same_frame_torque_Nm": 2.4000000000000004
+   }
+  },
+  "planar.slider_crank_reactions": {
+   "check": true,
+   "description": "Offset slider-crank with offset COMs: ram position, frame load and power.",
+   "dimension": 2,
+   "errors": {
+    "frame_force_N": {
+     "bound": 1e-08,
+     "value": 7.105427357601002e-15
+    },
+    "frame_moment_Nm": {
+     "bound": 1e-08,
+     "value": 7.762679388179095e-13
+    },
+    "power_balance_W": {
+     "bound": 1e-09,
+     "value": 1.2434497875801753e-14
+    },
+    "ram_position_m": {
+     "bound": 1e-09,
+     "value": 2.117750419472486e-13
+    }
+   },
+   "family": "planar_reactions",
+   "id": "planar.slider_crank_reactions",
+   "reference": "closed-form offset slider-crank position; Newton-Euler on the frame; power balance",
+   "settings": {
+    "duration_s": 0.6,
+    "samples": 61,
+    "solver": "inverse_dynamics"
+   },
+   "values": {
+    "peak_engine_torque_Nm": 2.97531950567878,
+    "peak_main_pin_force_N": 58.52759027339858
+   }
+  },
+  "schemas.joint_loads_fixtures": {
+   "check": null,
+   "description": "Joint-load payloads from 0.9.6, 0.9.7 and 0.9.8 against their JSON Schemas.",
+   "dimension": 2,
+   "errors": {
+    "v1_contract_violations": {
+     "bound": 0.0,
+     "value": 0.0
+    },
+    "v2_contract_violations": {
+     "bound": 0.0,
+     "value": 0.0
+    },
+    "v3_contract_violations": {
+     "bound": 0.0,
+     "value": 0.0
+    }
+   },
+   "family": "schema_fixtures",
+   "id": "schemas.joint_loads_fixtures",
+   "reference": "joint-loads v1-v3 fixtures carry the conventions their published JSON Schema pins",
+   "settings": {
+    "fixtures": [
+     "planar-joint-loads-v1",
+     "planar-joint-loads-v2",
+     "planar-joint-loads-v3"
+    ]
+   },
+   "values": {}
+  },
+  "schemas.planar_mechanism_fixtures": {
+   "check": null,
+   "description": "Planar mechanism v1-v3 fixtures: read, re-solve, compare with the producer.",
+   "dimension": 2,
+   "errors": {
+    "v1_engine_torque_Nm": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "v1_main_force_N": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "v2_engine_torque_Nm": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "v2_main_force_N": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "v3_engine_torque_Nm": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "v3_main_force_N": {
+     "bound": 1e-09,
+     "value": 0.0
+    }
+   },
+   "family": "schema_fixtures",
+   "id": "schemas.planar_mechanism_fixtures",
+   "reference": "payloads written by mbsd 0.9.6 (v1), 0.9.7 (v2) and 0.9.8 (v3) re-solve to what those releases computed",
+   "settings": {
+    "fixtures": [
+     "planar-mechanism-v1",
+     "planar-mechanism-v2",
+     "planar-mechanism-v3"
+    ],
+    "solver": "inverse_dynamics"
+   },
+   "values": {}
+  },
+  "schemas.spatial_fixtures": {
+   "check": null,
+   "description": "Spatial model and constrained-result fixtures from released versions.",
+   "dimension": 3,
+   "errors": {
+    "model_v3_com_y_m": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "model_v4_com_y_m": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "result_v2_rejected": {
+     "bound": 0.0,
+     "value": 0.0
+    },
+    "result_v3_rejected": {
+     "bound": 0.0,
+     "value": 0.0
+    }
+   },
+   "family": "schema_fixtures",
+   "id": "schemas.spatial_fixtures",
+   "reference": "spatial model v3 (0.9.6) and v4 (0.9.7) re-simulate to what those releases computed; old results validate",
+   "settings": {
+    "fixtures": [
+     "spatial-model-v3",
+     "spatial-model-v4",
+     "spatial-constrained-result-v2",
+     "spatial-constrained-result-v3"
+    ],
+    "solver": "simulate"
+   },
+   "values": {}
+  },
+  "spatial.cardan_speed_ratio": {
+   "check": null,
+   "description": "Single Cardan shaft through parallel_axes, three shaft angles.",
+   "dimension": 3,
+   "errors": {
+    "ratio_beta_15": {
+     "bound": 1e-06,
+     "value": 1.887379141862766e-15
+    },
+    "ratio_beta_30": {
+     "bound": 1e-06,
+     "value": 1.2789769243681803e-13
+    },
+    "ratio_beta_45": {
+     "bound": 1e-06,
+     "value": 1.319522269227491e-11
+    }
+   },
+   "family": "spatial_constrained_dynamics",
+   "id": "spatial.cardan_speed_ratio",
+   "reference": "closed-form Cardan ratio cos(b) / (1 - sin^2(b) cos^2(theta)) at b = 15, 30, 45 deg",
+   "settings": {
+    "samples": 33,
+    "solver": "solve_kinematics"
+   },
+   "values": {
+    "ratio_range_beta_15": 0.06935035412101676,
+    "ratio_range_beta_30": 0.2886751345948151,
+    "ratio_range_beta_45": 0.7071067811865493
+   }
+  },
+  "spatial.check_fails_without_projection": {
+   "check": false,
+   "description": "Failing verdict: a pendulum integrated loosely with projection disabled.",
+   "dimension": 3,
+   "errors": {},
+   "family": "check_verdicts",
+   "id": "spatial.check_fails_without_projection",
+   "reference": "check() must reject a loosely integrated, unprojected constrained result",
+   "settings": {
+    "atol": 0.001,
+    "method": "RK45",
+    "project_samples": false,
+    "rtol": 0.001,
+    "solver": "simulate"
+   },
+   "values": {
+    "failed_checks": 3.0
+   }
+  },
+  "spatial.compound_pendulum_arbitrary_axis": {
+   "check": true,
+   "description": "Pendulum on a world-oriented hinge with non-identity frames on both bodies.",
+   "dimension": 3,
+   "errors": {
+    "angle_rad": {
+     "bound": 1e-07,
+     "value": 1.8279489033545815e-11
+    }
+   },
+   "family": "spatial_constrained_dynamics",
+   "id": "spatial.compound_pendulum_arbitrary_axis",
+   "reference": "separately integrated 1-DOF ODE about the hinge axis (full inertia tensor, eccentric COM)",
+   "settings": {
+    "atol": 1e-13,
+    "constraint_tolerance": 1e-11,
+    "reference_solver": "scipy DOP853 rtol 1e-12",
+    "rtol": 1e-11,
+    "solver": "simulate"
+   },
+   "values": {
+    "angle_end_rad": 0.941314011001748
+   }
+  },
+  "spatial.coordinate_drive_effort": {
+   "check": true,
+   "description": "Carriage lifted by a polynomial coordinate drive against gravity.",
+   "dimension": 3,
+   "errors": {
+    "effort_N": {
+     "bound": 1e-08,
+     "value": 7.105427357601002e-15
+    }
+   },
+   "family": "spatial_drives",
+   "id": "spatial.coordinate_drive_effort",
+   "reference": "drive force = m (z'' + g) for a time-varying lift with explicit acceleration",
+   "settings": {
+    "samples": 11,
+    "solver": "simulate"
+   },
+   "values": {
+    "effort_end_N": 29.429999999999996
+   }
+  },
+  "spatial.cross_mechanism_result_rejected": {
+   "check": null,
+   "description": "Identity guard: one mechanism's result handed to another mechanism.",
+   "dimension": 3,
+   "errors": {
+    "accepted_foreign_result": {
+     "bound": 0.0,
+     "value": 0.0
+    }
+   },
+   "family": "spatial_guardrails",
+   "id": "spatial.cross_mechanism_result_rejected",
+   "reference": "a result is bound to its model identity: check() of another model's result raises",
+   "settings": {
+    "solver": "simulate"
+   },
+   "values": {}
+  },
+  "spatial.fast_asymmetric_top": {
+   "check": true,
+   "description": "Torque-free asymmetric body spinning fast near its major axis.",
+   "dimension": 3,
+   "errors": {
+    "energy_rel": {
+     "bound": 1e-09,
+     "value": 2.9976021664879227e-15
+    },
+    "momentum_rel": {
+     "bound": 1e-09,
+     "value": 2.2396902357655136e-13
+    }
+   },
+   "family": "spatial_free_dynamics",
+   "id": "spatial.fast_asymmetric_top",
+   "reference": "energy and world angular momentum conservation at high spin",
+   "settings": {
+    "atol": 1e-13,
+    "rtol": 1e-11,
+    "solver": "simulate",
+    "spin_rad_s": 300.0
+   },
+   "values": {
+    "spin_x_end_rad_s": 300.00080043320514
+   }
+  },
+  "spatial.fixed_pair_pure_couple": {
+   "check": true,
+   "description": "Two welded bodies, free in space, spun up by a couple on one of them.",
+   "dimension": 3,
+   "errors": {
+    "alpha_a_rad_s2": {
+     "bound": 1e-09,
+     "value": 0.0
+    },
+    "com_drift_m": {
+     "bound": 1e-12,
+     "value": 0.0
+    },
+    "weld_torque_on_b_Nm": {
+     "bound": 1e-09,
+     "value": 0.0
+    }
+   },
+   "family": "spatial_constrained_dynamics",
+   "id": "spatial.fixed_pair_pure_couple",
+   "reference": "rigid composite under a pure couple: alpha = tau / I_total; weld reaction = I_b alpha",
+   "settings": {
+    "atol": 1e-13,
+    "duration_s": 0.5,
+    "rtol": 1e-11,
+    "solver": "simulate"
+   },
+   "values": {
+    "spin_end_rad_s": 1.2
+   }
+  },
+  "spatial.hinge_multi_revolution": {
+   "check": null,
+   "description": "Hinge driven forward and backward through whole and half revolutions.",
+   "dimension": 3,
+   "errors": {
+    "negative_angle_rad": {
+     "bound": 1e-08,
+     "value": 7.495115639244432e-12
+    },
+    "positive_angle_rad": {
+     "bound": 1e-08,
+     "value": 7.495115639244432e-12
+    }
+   },
+   "family": "spatial_drives",
+   "id": "spatial.hinge_multi_revolution",
+   "reference": "construction identity: a revolute drive reproduces its law through exact half turns",
+   "settings": {
+    "constraint_tolerance": 1e-11,
+    "samples": 25,
+    "solver": "simulate",
+    "turns": 3
+   },
+   "values": {
+    "negative_final_angle_rad": -18.84955592153876,
+    "positive_final_angle_rad": 18.84955592153876
+   }
+  },
+  "spatial.offset_force_reaction": {
+   "check": true,
+   "description": "A welded body loaded by a force applied away from its COM.",
+   "dimension": 3,
+   "errors": {
+    "reaction_force_N": {
+     "bound": 1e-09,
+     "value": 8.881784197001252e-16
+    },
+    "reaction_torque_Nm": {
+     "bound": 1e-09,
+     "value": 0.0
+    }
+   },
+   "family": "spatial_reactions",
+   "id": "spatial.offset_force_reaction",
+   "reference": "static equilibrium: reaction force -F and reaction torque -(r x F) about the COM",
+   "settings": {
+    "samples": 3,
+    "solver": "simulate"
+   },
+   "values": {
+    "reaction_force_z_N": -5.000000000000001
+   }
+  },
+  "spatial.redundant_bearing_rejected": {
+   "check": null,
+   "description": "Cardan shaft with a second revolute bearing: redundant, rejected by name.",
+   "dimension": 3,
+   "errors": {
+    "not_named": {
+     "bound": 0.0,
+     "value": 0.0
+    },
+    "validate_ok": {
+     "bound": 0.0,
+     "value": 0.0
+    },
+    "wrong_error_code": {
+     "bound": 0.0,
+     "value": 0.0
+    }
+   },
+   "family": "spatial_guardrails",
+   "id": "spatial.redundant_bearing_rejected",
+   "reference": "validate() names the redundant bearing before any integration; simulate() raises rank_deficient",
+   "settings": {
+    "solver": "validate"
+   },
+   "values": {}
+  },
+  "spatial.revolute_drive_effort": {
+   "check": true,
+   "description": "Arm swung up by an accelerating revolute drive against gravity.",
+   "dimension": 3,
+   "errors": {
+    "torque_Nm": {
+     "bound": 1e-07,
+     "value": 1.0409451078885468e-10
+    }
+   },
+   "family": "spatial_drives",
+   "id": "spatial.revolute_drive_effort",
+   "reference": "hinge torque = I alpha + m g r cos(theta) for an accelerating arm",
+   "settings": {
+    "constraint_tolerance": 1e-11,
+    "samples": 21,
+    "solver": "simulate"
+   },
+   "values": {
+    "torque_end_Nm": 2.7939319483969953
+   }
+  },
+  "spatial.scale_invariance": {
+   "check": null,
+   "description": "The same pendulum at three length scales, compared in dimensionless time.",
+   "dimension": 3,
+   "errors": {
+    "km_vs_m_rad": {
+     "bound": 1e-06,
+     "value": 3.798751391226318e-08
+    },
+    "mm_vs_m_rad": {
+     "bound": 1e-06,
+     "value": 8.285711006195129e-11
+    }
+   },
+   "family": "spatial_conditioning",
+   "id": "spatial.scale_invariance",
+   "reference": "dimensionless pendulum motion identical at 1 mm and 1 km scale (t scaled by sqrt(L/g))",
+   "settings": {
+    "atol_scaled": 1e-12,
+    "lengths_m": [
+     0.001,
+     1.0,
+     1000.0
+    ],
+    "rtol": 1e-10,
+    "solver": "simulate"
+   },
+   "values": {
+    "angle_end_rad": 0.2851117789555276
+   }
+  },
+  "spatial.three_joint_kinds_between_moving_bodies": {
+   "check": true,
+   "description": "Chain ground-spherical-A-revolute-B-fixed-C swinging under gravity.",
+   "dimension": 3,
+   "errors": {
+    "energy_drift_J": {
+     "bound": 1e-06,
+     "value": 6.387954609721191e-10
+    }
+   },
+   "family": "spatial_constrained_dynamics",
+   "id": "spatial.three_joint_kinds_between_moving_bodies",
+   "reference": "energy conservation; check() residual and force/torque balance verdicts",
+   "settings": {
+    "atol": 1e-12,
+    "duration_s": 1.0,
+    "rtol": 1e-10,
+    "solver": "simulate"
+   },
+   "values": {
+    "c_height_end_m": 0.08854304483595958
+   }
+  },
+  "spatial.tolerance_convergence": {
+   "check": null,
+   "description": "Large-swing pendulum at three tolerances, with and without sample projection.",
+   "dimension": 3,
+   "errors": {
+    "not_monotone": {
+     "bound": 0.0,
+     "value": 0.0
+    },
+    "tight_error_rad": {
+     "bound": 1e-07,
+     "value": 1.722254561187242e-10
+    }
+   },
+   "family": "spatial_convergence",
+   "id": "spatial.tolerance_convergence",
+   "reference": "error against the 1-DOF reference ODE falls as rtol tightens; projection on and off",
+   "settings": {
+    "rtols": [
+     1e-05,
+     1e-08,
+     1e-11
+    ],
+    "solver": "simulate"
+   },
+   "values": {
+    "error_rtol_1e-05_noproj": 4.7367602523162855e-05,
+    "error_rtol_1e-05_proj": 2.6845353310850362e-05,
+    "error_rtol_1e-08_noproj": 1.6465402929988215e-08,
+    "error_rtol_1e-08_proj": 1.368902419196516e-08,
+    "error_rtol_1e-11_noproj": 1.722254561187242e-10,
+    "error_rtol_1e-11_proj": 1.722254561187242e-10
+   }
+  }
+ },
+ "provenance": {
+  "mbsd": "0.9.8",
+  "numpy": "2.4.6",
+  "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.39",
+  "python": "3.13.12",
+  "recorded": "2026-11-08",
+  "scipy": "1.17.1",
+  "value_atol": 1e-12,
+  "value_rtol": 1e-06
+ },
+ "schema": "mbsd.validation_corpus",
+ "schema_version": 1
+}

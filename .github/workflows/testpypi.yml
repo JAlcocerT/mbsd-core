@@ -1,0 +1,30 @@
+name: testpypi
+
+# Manual only: publishes the qualified candidate to TestPyPI with trusted
+# publishing. Configure the "testpypi" environment and a trusted publisher
+# for JAlcocerT/mbsd-core on test.pypi.org before the first run.
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Qualify before publishing
+        run: scripts/qualify_release.sh
+      - name: Build
+        run: uv build
+      - name: Publish to TestPyPI
+        run: uv publish --trusted-publishing always --publish-url https://test.pypi.org/legacy/ --check-url https://test.pypi.org/simple/
+      - name: Install from TestPyPI
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          uv venv /tmp/from-testpypi
+          uv pip install --python /tmp/from-testpypi/bin/python --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ "mbsd==$version"
+          /tmp/from-testpypi/bin/python -c "import mbsd; print(mbsd.__version__); print(len(mbsd.api_surface()['namespaces']))"

@@ -1154,12 +1154,15 @@ class SpatialMechanism:
         )
 
     def rigid_body_diagnostics(self, result: SpatialRigidBodyDynamicsResult):
+        _deprecated("rigid_body_diagnostics")
         return rigid_body_diagnostics(self, result)
 
     def rigid_body_result_to_dict(self, result: SpatialRigidBodyDynamicsResult):
+        _deprecated("rigid_body_result_to_dict")
         return rigid_body_result_to_dict(self, result)
 
     def rigid_body_result_to_json(self, result, path: str | Path, *, indent: int = 2):
+        _deprecated("rigid_body_result_to_json")
         return rigid_body_result_to_json(self, result, path, indent=indent)
 
     def pair_interaction(
@@ -1190,12 +1193,15 @@ class SpatialMechanism:
         )
 
     def coupled_diagnostics(self, result: CoupledRigidBodyDynamicsResult):
+        _deprecated("coupled_diagnostics")
         return coupled_diagnostics(self, result)
 
     def coupled_result_to_dict(self, result: CoupledRigidBodyDynamicsResult):
+        _deprecated("coupled_result_to_dict")
         return coupled_result_to_dict(self, result)
 
     def coupled_result_to_json(self, result, path: str | Path, *, indent: int = 2):
+        _deprecated("coupled_result_to_json")
         return coupled_result_to_json(self, result, path, indent=indent)
 
     def simulate_constrained_rigid_bodies(

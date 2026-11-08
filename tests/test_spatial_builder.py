@@ -6,19 +6,23 @@ import numpy as np
 import pytest
 
 from mbsd import Mechanism, MechanismSolveError
+from mbsd.experimental import (
+    load_spatial_dynamic_result_payload,
+    validate_spatial_dynamic_result_payload,
+)
 from mbsd.spatial import (
     Pose3D,
     Quaternion,
     SpatialMechanism,
-    load_spatial_dynamic_result_payload,
-    load_rigid_body_result_payload,
-    load_coupled_result_payload,
     load_constrained_result_payload,
     validate_constrained_result_payload,
-    validate_coupled_result_payload,
     load_spatial_kinematic_result_payload,
     validate_spatial_kinematic_result_payload,
-    validate_spatial_dynamic_result_payload,
+)
+from mbsd.spatial import (  # deprecated until 1.0: legacy result readers stay covered
+    load_coupled_result_payload,
+    load_rigid_body_result_payload,
+    validate_coupled_result_payload,
 )
 
 

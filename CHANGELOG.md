@@ -1,6 +1,51 @@
 # Changelog
 
-## Unreleased - v0.9.8 candidate: gaps from the FreeCAD shorts
+## v0.9.8 - Release Candidate and Compatibility Freeze
+
+The 1.0 release candidate: no new physics family; the public surface and
+emitted schemas are frozen for the candidate period (`CANDIDATE.md`).
+
+- **Contract freeze.** `mbsd.api_surface()` (and the generated
+  `schemas/mbsd.api-surface-v1.json`) classifies every public symbol and
+  builder method as stable, experimental or deprecated, with the versioning,
+  deprecation and schema policies. `tests/test_api_surface.py` fails on any
+  unclassified, removed or reclassified symbol. Compatibility note: adds the
+  top-level `mbsd.api_surface` and the `api_surface` manifest operation.
+- **`mbsd.experimental`.** Fixed-orientation dynamics (`SpatialForce`,
+  `SpatialDynamicsResult`, their payload helpers) moved there. Compatibility
+  note: the `mbsd.spatial` names still work until 1.0 with a
+  `DeprecationWarning`.
+- **Deprecations.** The pre-0.9.7 free-body and coupled result types and
+  readers in `mbsd.spatial`, and `SpatialMechanism.rigid_body_*()` /
+  `coupled_*()`, now warn and are removed in 1.0 (the `simulate_*` aliases
+  already warned).
+- **`STABILITY.md`.** Stability classes, semver / deprecation / schema
+  policies, Python, dependency, schema, examples and adapter compatibility
+  tables, and migration notes from supported 0.x APIs and payloads.
+- **Validation corpus** (`corpus/`, `tests/test_corpus.py`). 27 cases with
+  independent references (closed forms, separately integrated ODEs,
+  conservation laws, Newton-Euler), recorded values, tolerances, solver
+  settings and provenance in `corpus/expected-v1.json`; passing and failing
+  `check()` verdicts in both dimensions; schema fixtures written by mbsd
+  0.9.6, 0.9.7 and 0.9.8 themselves, re-solved to what those releases
+  computed. Covers exact half turns and multi-revolution hinges, arbitrary
+  world hinge axes with non-identity frames and full inertia tensors,
+  spherical / revolute / fixed joints between moving bodies, pure couples,
+  offset-force reactions, drive efforts, fast spin, Cardan ratios, redundancy
+  rejection, 1 mm to 1 km scale invariance, tolerance convergence with
+  projection on and off, and identity guards.
+- **Determinism.** Repeated solves, in one process or fresh ones, are
+  bitwise identical (`tests/test_determinism.py`); across platforms the
+  corpus compares with tolerances.
+- **Packaging qualification.** `scripts/qualify_release.sh` (`make
+  qualify`, CI job `qualify`): clean export, sdist and wheel with
+  `twine check`, the full suite and corpus against the installed wheel on
+  Python 3.10-3.13 with the packaged schemas read back, the sdist, the
+  dependency floor (numpy 2.0, scipy 1.13) and ceiling, and a TestPyPI upload
+  dry run. A manual `testpypi` workflow publishes with trusted publishing.
+- Development status classifier moves to Beta.
+
+### Gaps from the FreeCAD shorts
 
 - Planar `DynamicsResult.a`: forward dynamics returns the accelerations
   solved from the same saddle system as the multipliers, for exact power,

@@ -49,6 +49,7 @@ def test_top_level_public_api_is_small():
         "Polynomial",
         "Spring",
         "Tabulated",
+        "api_surface",
         "capabilities",
         "operation_manifest",
     ]
