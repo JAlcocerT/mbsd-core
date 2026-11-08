@@ -706,9 +706,12 @@ def spatial_tolerance_convergence():
             com = result.center_of_mass_position[:, -1]
             errors_by[(rtol, project)] = float(np.max(np.abs(np.arctan2(com[:, 0], -com[:, 1]) - reference)))
     monotone = all(errors_by[(1e-5, p)] > errors_by[(1e-8, p)] > errors_by[(1e-11, p)] for p in (True, False))
-    return outcome(errors={"tight_error_rad": (errors_by[(1e-11, True)], 1e-7),
-                           "not_monotone": (0.0 if monotone else 1.0, 0.0)},
-                   values={f"error_rtol_{r:g}_{'proj' if p else 'noproj'}": e for (r, p), e in errors_by.items()})
+    # Truncation-level errors differ in their last digits across CPUs and BLAS
+    # builds, so they are bounded (error <= max(10 rtol, 1e-8)), not recorded.
+    errors = {f"error_rtol_{r:g}_{'proj' if p else 'noproj'}": (e, max(10.0 * r, 1e-8))
+              for (r, p), e in errors_by.items()}
+    errors["not_monotone"] = (0.0 if monotone else 1.0, 0.0)
+    return outcome(errors=errors)
 
 
 @case("spatial.check_fails_without_projection", "check_verdicts", 3,

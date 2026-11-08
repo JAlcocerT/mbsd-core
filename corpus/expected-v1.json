@@ -748,13 +748,33 @@
    "description": "Large-swing pendulum at three tolerances, with and without sample projection.",
    "dimension": 3,
    "errors": {
+    "error_rtol_1e-05_noproj": {
+     "bound": 0.0001,
+     "value": 4.7367602523162855e-05
+    },
+    "error_rtol_1e-05_proj": {
+     "bound": 0.0001,
+     "value": 2.6845353310850362e-05
+    },
+    "error_rtol_1e-08_noproj": {
+     "bound": 1e-07,
+     "value": 1.6465402929988215e-08
+    },
+    "error_rtol_1e-08_proj": {
+     "bound": 1e-07,
+     "value": 1.368902419196516e-08
+    },
+    "error_rtol_1e-11_noproj": {
+     "bound": 1e-08,
+     "value": 1.722254561187242e-10
+    },
+    "error_rtol_1e-11_proj": {
+     "bound": 1e-08,
+     "value": 1.722254561187242e-10
+    },
     "not_monotone": {
      "bound": 0.0,
      "value": 0.0
-    },
-    "tight_error_rad": {
-     "bound": 1e-07,
-     "value": 1.722254561187242e-10
     }
    },
    "family": "spatial_convergence",
@@ -768,14 +788,7 @@
     ],
     "solver": "simulate"
    },
-   "values": {
-    "error_rtol_1e-05_noproj": 4.7367602523162855e-05,
-    "error_rtol_1e-05_proj": 2.6845353310850362e-05,
-    "error_rtol_1e-08_noproj": 1.6465402929988215e-08,
-    "error_rtol_1e-08_proj": 1.368902419196516e-08,
-    "error_rtol_1e-11_noproj": 1.722254561187242e-10,
-    "error_rtol_1e-11_proj": 1.722254561187242e-10
-   }
+   "values": {}
   }
  },
  "provenance": {
