@@ -194,6 +194,75 @@ analysis.mass_matrix(m, result.q[:, 0])               # public primitives
   motion residuals, and point kinematics. Internal modules carry no stability
   promise.
 
+### Planar additions in 0.9.8 (candidate)
+
+```python
+import numpy as np
+from mbsd import ConstantSpeed, Mechanism, Polynomial
+
+m = Mechanism.planar(gravity=(0.0, 0.0))
+ground = m.ground()
+outer = m.body("outer_paddles", mass=1.0, inertia=0.4)
+inner = m.body("inner_paddles", mass=1.0, inertia=0.4)
+m.pin(ground, outer, name="sleeve")
+m.pin(ground, inner, name="shaft")
+m.gear(outer, inner, -1.0, name="reverser")          # idlers on the frame
+m.coordinate_drive(outer, "theta", law=Polynomial((0.0, 0.0, 1.5)), name="crank")
+result = m.inverse_dynamics(np.linspace(0.0, 1.0, 11), q0=np.zeros(9))
+loads = m.joint_loads(result)
+loads.meshes["reverser"]["effort_on_b"]               # torque on the inner set
+loads.frame["moment"]                                 # ~0: the sets cancel
+```
+
+- `gear(body_a, body_b, ratio, carrier=ground)` couples two rotations:
+  `(theta_b - theta_c) = ratio * (theta_a - theta_c) + offset`. The ratio is
+  signed (external spur `-N_a/N_b`, internal ring `+N_a/N_b`, reverser `-1`);
+  a moving `carrier` gives planetary and differential trains.
+- `rack(pinion, rack, radius, axis=...)` couples a ground-axled pinion to a
+  rack guided along a world axis (guide it with `slider`).
+- Meshes are solved constraints and portable. `joint_loads().meshes` reports
+  the torque (or the rack's axial force) on each member and on the carrier;
+  the ground share is part of the frame load.
+- `motor(..., relative_to=body)` and `coordinate_drive(body, "theta", law=...,
+  relative_to=body)` drive an angle relative to another body, so the reaction
+  torque stays inside the mechanism (a motor mounted on a moving part). Their
+  power uses the relative angular rate.
+- Forward-dynamics results carry `a`: the accelerations solved from the same
+  saddle system as the multipliers. Use them for exact power, momentum and
+  Newton-Euler balances instead of differentiating `v`; they exclude the
+  Baumgarte stabilization terms.
+- Spatial tabulated drives can be checked at their own end points: the
+  drive-derivative check uses one-sided differences at the table's edges.
+
+### Sign conventions and load semantics
+
+- `joint_loads().joints[name]["force_on_i"]` is the force the joint applies to
+  body `i`. For a pin to ground (`body_i == 0`) that is the force **on the
+  wall**; the body feels `force_on_j`. Check signs against an equilibrium.
+- `joint_loads().frame` is the total force and moment (about the world origin)
+  the mechanism exerts on ground. It must equal `-sum m (a_G - g)` and
+  `-dH/dt`: a cheap whole-system check with `result.a`.
+- The frame only contains constraints attached to ground. A raw
+  `UserConstraint` between two moving bodies whose physical support sits on
+  the frame (idler gears, a guide) contributes nothing to it: model the
+  support explicitly (`gear(..., carrier=ground)`) or add it by hand.
+- Gear and rack meshes carry torque only: the tooth force is not resolved
+  into the axle pins, so pin reactions exclude it; the frame moment is
+  complete.
+- Model a payload either as the body's mass or as a `constant_force`, not
+  both, and use the same choice in any energy balance.
+- A friction force acts at the contact point, not at the body reference
+  point: apply its moment (`h * F`) too, or the tipping / reaction picture is
+  wrong even when the motion is unchanged.
+- Spatial torques are axial vectors: under a mirror the drive axis flips, so
+  a mirrored pair reports equal torques about its own axes, and opposite ones
+  about a common world axis.
+- Spatial `simulate()` is costly for many bodies (a fully driven 9-body model
+  takes about 80 s per 0.25 s at `rtol=1e-8`). For a **fully driven** model
+  the state at any time comes from `solve_kinematics()` +
+  `consistent_velocities()`, so the timeline can be split into segments run in
+  parallel and stitched. That is not valid for free or partly driven models.
+
 ## One Spatial simulate() and Spatial Guardrails
 
 MBSD `0.9.7` replaces the free-body, coupled, and constrained entry points
@@ -526,10 +595,14 @@ The handoff schemas available since `0.4.0` are:
 - `mbsd.planar.joint_loads` (since `0.9.6`): named joint reactions, drive
   efforts and power, and the frame load over time. Version 2 (`0.9.7`) adds
   distance drives, a drive `kind`, and raw user-constraint reactions.
+  Version 3 (`0.9.8`) adds the `meshes` block (gear and rack efforts) and
+  `relative_to` on relative drives.
 
-`0.9.7` emits `mbsd.planar.mechanism` v2, which adds `point_on_line` joints and
-`distance_drive` entries; readers accept v1 and v2, and v0.9.6 readers reject
-v2 instead of silently dropping those constraints.
+`0.9.8` emits `mbsd.planar.mechanism` v3, which adds `gear` and `rack`
+entries and `relative_to` on theta drives; readers accept v1-v3. `0.9.7`
+added v2 (`point_on_line` joints and `distance_drive` entries). Older readers
+reject newer versions instead of silently dropping constraints. Dynamic
+result payloads now include accelerations (`coordinates.a`, `ax`/`ay`/`alpha`).
 
 Since `0.9.6`, mechanism payloads also carry joint and drive names, portable
 motion laws, registered springs, load descriptors, and a top-level `portable`

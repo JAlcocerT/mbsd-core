@@ -40,6 +40,7 @@ class ConstraintGroup:
 
 
 DRIVE_KINDS = {"motor", "coordinate_drive", "distance_drive"}
+MESH_KINDS = {"gear", "rack"}
 
 
 def constraint_groups(mbody) -> list[ConstraintGroup]:
@@ -69,13 +70,20 @@ def constraint_groups(mbody) -> list[ConstraintGroup]:
             return ()
         if metadata.get("body_a") is not None:
             return (int(metadata["body_a"]), int(body))
+        if metadata.get("relative_to") is not None:
+            return (int(metadata["relative_to"]), int(body))
         return (int(body),)
 
     def user_kind_groups():
         nonlocal row
         for index, uc in enumerate(mbody.user_constraints):
             metadata = dict(getattr(uc, "metadata", {}) or {})
-            kind = "drive" if metadata.get("kind") in DRIVE_KINDS else "user"
+            if metadata.get("kind") in DRIVE_KINDS:
+                kind = "drive"
+            elif metadata.get("kind") in MESH_KINDS:
+                kind = "mesh"
+            else:
+                kind = "user"
             name = getattr(uc, "name", "") or f"{kind}_{index}"
             groups.append(ConstraintGroup(kind, index, name, row, uc.count, user_bodies(uc), metadata))
             row += uc.count
@@ -94,10 +102,16 @@ class JointLoads:
     applies to its body coordinate and the matching power; a distance drive's
     effort is its axial force, positive when pushing its points apart.
     ``constraints[name]`` holds the full generalized reaction ``-C_q.T λ``
-    (one row per coordinate) of each raw user constraint. ``frame`` holds the
-    total force and moment (about the world origin) the mechanism exerts on the
-    ground body; coordinate drives react against ground, distance drives and
-    user constraints through their own ground attachment.
+    (one row per coordinate) of each raw user constraint. ``meshes[name]``
+    holds, for each ``gear`` / ``rack``, the torque (N*m) or axial force (N)
+    the mesh applies to each member and, for gears, to the carrier.
+    ``frame`` holds the total force and moment (about the world origin) the
+    mechanism exerts on the ground body; absolute coordinate drives react
+    against ground, relative drives on their reference body, and distance
+    drives, meshes and user constraints through their own ground attachment.
+    A raw user constraint between two moving bodies contributes nothing to the
+    frame even if its physical support sits on the frame: model such supports
+    explicitly (a ``gear`` with ``carrier=ground``) or add them by hand.
     """
 
     t: np.ndarray
@@ -106,6 +120,7 @@ class JointLoads:
     frame: dict[str, np.ndarray]
     max_action_reaction_residual: float
     constraints: dict[str, dict[str, Any]] = field(default_factory=dict)
+    meshes: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 _DRIVE_OFFSETS = {"x": 0, "y": 1, "theta": 2}
@@ -117,6 +132,7 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
     joints: dict[str, dict[str, Any]] = {}
     drives: dict[str, dict[str, Any]] = {}
     user: dict[str, dict[str, Any]] = {}
+    meshes: dict[str, dict[str, Any]] = {}
     frame_force = np.zeros((2, nsteps))
     frame_moment = np.zeros(nsteps)
     max_residual = 0.0
@@ -145,6 +161,18 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
             }
             if group.metadata.get("kind") == "distance_drive":
                 drives[group.name]["body_a"] = group.metadata.get("body_a")
+            if group.metadata.get("relative_to") is not None:
+                drives[group.name]["relative_to"] = int(group.metadata["relative_to"])
+        elif group.kind == "mesh":
+            meshes[group.name] = {
+                "kind": group.metadata["kind"],
+                "body_a": int(group.metadata["body_a"]),
+                "body_b": int(group.metadata["body"]),
+                "carrier": int(group.metadata.get("carrier", 0)),
+                "effort_on_a": np.zeros(nsteps),
+                "effort_on_b": np.zeros(nsteps),
+                "effort_on_carrier": np.zeros(nsteps),
+            }
         elif group.kind == "user":
             user[group.name] = {
                 "kind": "user",
@@ -182,6 +210,17 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
             elif group.name in user:
                 user[group.name]["generalized_force"][:, step] = Q
                 _add_ground_share(Q, qk, frame_force, frame_moment, step)
+            elif group.name in meshes:
+                record = meshes[group.name]
+                a, b, c = record["body_a"], record["body_b"], record["carrier"]
+                record["effort_on_a"][step] = float(Q[3 * a + 2])
+                if record["kind"] == "rack":
+                    axis = np.asarray(group.metadata["axis"], dtype=float)
+                    record["effort_on_b"][step] = float(axis @ Q[3 * b : 3 * b + 2])
+                else:
+                    record["effort_on_b"][step] = float(Q[3 * b + 2])
+                record["effort_on_carrier"][step] = float(Q[3 * c + 2])
+                _add_ground_share(Q, qk, frame_force, frame_moment, step)
             elif group.name in drives:
                 record = drives[group.name]
                 coordinate = record["coordinate"]
@@ -190,6 +229,10 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
                 col = 3 * int(record["body"]) + _DRIVE_OFFSETS[coordinate]
                 effort = float(Q[col])
                 record["effort"][step] = effort
+                reference = record.get("relative_to")
+                if reference is not None:
+                    record["power"][step] = effort * (vk[col] - vk[3 * int(reference) + 2])
+                    continue  # reacts on the reference body, not on ground
                 record["power"][step] = effort * vk[col]
                 body = int(record["body"])
                 if body != 0:
@@ -211,6 +254,7 @@ def joint_loads(mbody, t: np.ndarray, q: np.ndarray, v: np.ndarray, multipliers:
         frame={"force": frame_force, "moment": frame_moment},
         max_action_reaction_residual=max_residual,
         constraints=user,
+        meshes=meshes,
     )
 
 

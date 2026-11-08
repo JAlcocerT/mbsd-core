@@ -24,11 +24,13 @@ from .model import MBody
 
 SCHEMA_VERSION = 1
 # v2 adds point-on-line joints and distance drives; v0.9.6 readers reject it
-# instead of silently dropping those constraints.
-MECHANISM_SCHEMA_VERSION = 2
-READABLE_MECHANISM_SCHEMA_VERSIONS = (1, 2)
+# instead of silently dropping those constraints. v3 adds gear and rack meshes
+# and relative theta drives (``relative_to``).
+MECHANISM_SCHEMA_VERSION = 3
+READABLE_MECHANISM_SCHEMA_VERSIONS = (1, 2, 3)
 # v2 adds distance drives, a drive kind, and the user-constraint block.
-JOINT_LOADS_SCHEMA_VERSION = 2
+# v3 adds the mesh block (gear / rack efforts) and relative drives.
+JOINT_LOADS_SCHEMA_VERSION = 3
 
 
 def _units() -> dict[str, str]:
@@ -200,7 +202,7 @@ def result_to_dict(
         },
         "body_poses": _body_poses(mechanism.model, result),
     }
-    if hasattr(result, "a"):
+    if getattr(result, "a", None) is not None:
         payload["coordinates"]["a"] = _matrix(result.a)
     if hasattr(result, "provenance"):
         payload["provenance"] = _metadata(dict(result.provenance))
@@ -301,7 +303,7 @@ def point_trace_to_dict(
         vi = result.v[start : start + 3, step]
         positions.append(_vector(point_position(qi, local_point)))
         velocities.append(_vector(point_velocity(qi, vi, local_point)))
-        if hasattr(result, "a"):
+        if getattr(result, "a", None) is not None:
             ai = result.a[start : start + 3, step]
             accelerations.append(_vector(point_acceleration(qi, vi, ai, local_point)))
 
@@ -419,7 +421,7 @@ def _body_poses(
                 "omega": _vector(result.v[start + 2, :]),
             }
         )
-        if hasattr(result, "a"):
+        if getattr(result, "a", None) is not None:
             body_poses[-1].update(
                 {
                     "ax": _vector(result.a[start, :]),
@@ -616,7 +618,24 @@ def joint_loads_to_dict(
         }
         if record.get("body_a") is not None:
             entry["body_a"] = {"index": record["body_a"], "name": bodies[record["body_a"]].name}
+        if record.get("relative_to") is not None:
+            reference = record["relative_to"]
+            entry["relative_to"] = {"index": reference, "name": bodies[reference].name}
         drives.append(entry)
+    meshes = []
+    for name, record in loads.meshes.items():
+        entry = {
+            "name": name,
+            "kind": record["kind"],
+            "body_a": {"index": record["body_a"], "name": bodies[record["body_a"]].name},
+            "body_b": {"index": record["body_b"], "name": bodies[record["body_b"]].name},
+            "carrier": {"index": record["carrier"], "name": bodies[record["carrier"]].name},
+            "effort_units": ["N*m", "N" if record["kind"] == "rack" else "N*m", "N*m"],
+            "effort_on_a": _vector(record["effort_on_a"]),
+            "effort_on_b": _vector(record["effort_on_b"]),
+            "effort_on_carrier": _vector(record["effort_on_carrier"]),
+        }
+        meshes.append(entry)
     constraints = [
         {
             "name": name,
@@ -644,12 +663,16 @@ def joint_loads_to_dict(
             "distance_drive_effort": "axial_force_positive_pushing_points_apart",
             "distance_drive_reaction": "through_its_attachment_bodies",
             "drive_reaction": "actuators_react_against_ground",
+            "relative_drive_reaction": "on_relative_to_body",
+            "mesh_effort": "generalized_force_applied_by_mesh_to_member_coordinate",
+            "mesh_reaction": "torque_only_tooth_force_not_in_pins",
         },
         "metadata": _metadata(metadata),
         "time": _vector(loads.t),
         "joints": joints,
         "drives": drives,
         "constraints": constraints,
+        "meshes": meshes,
         "frame": {
             "fx": _vector(loads.frame["force"][0]),
             "fy": _vector(loads.frame["force"][1]),
@@ -674,7 +697,7 @@ def joint_loads_to_json(
 
 
 def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
-    """Rebuild a planar mechanism from a ``mbsd.planar.mechanism`` v1 or v2 payload.
+    """Rebuild a planar mechanism from a ``mbsd.planar.mechanism`` v1, v2 or v3 payload.
 
     Rejects opaque entries (Python-callable drives, callback loads, raw user
     constraints) with ``NotPortableError``.
@@ -736,11 +759,26 @@ def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
     for drive in payload.get("user_constraints", []):
         kind = drive.get("kind")
         name = drive.get("name")
+        relative_to = drive.get("relative_to")
         if kind == "motor":
-            mechanism.motor(drive["body"], omega=drive["omega"], phase=drive["phase"], name=name)
+            mechanism.motor(
+                drive["body"], omega=drive["omega"], phase=drive["phase"], name=name,
+                relative_to=relative_to,
+            )
         elif kind == "coordinate_drive" and "law" in drive:
             mechanism.coordinate_drive(
-                drive["body"], drive["coordinate"], law=law_from_dict(drive["law"]), name=name
+                drive["body"], drive["coordinate"], law=law_from_dict(drive["law"]), name=name,
+                relative_to=relative_to,
+            )
+        elif kind == "gear":
+            mechanism.gear(
+                drive["body_a"], drive["body"], drive["ratio"], carrier=drive["carrier"],
+                offset=drive["offset"], name=name,
+            )
+        elif kind == "rack":
+            mechanism.rack(
+                drive["body_a"], drive["body"], drive["radius"], axis=drive["axis"],
+                offset=drive["offset"], name=name,
             )
         elif kind == "distance_drive":
             mechanism.distance_drive(
@@ -752,7 +790,7 @@ def mechanism_from_dict(payload: dict[str, Any]) -> PlanarMechanism:
                 f"User constraint {name or drive.get('index')!r} ({kind}) has no portable "
                 "descriptor and cannot be imported.",
                 context={"user_constraint": drive.get("index"), "kind": kind},
-                remediation="Rebuild it with motor() or coordinate_drive(law=...).",
+                remediation="Rebuild it with motor(), coordinate_drive(law=...), gear() or rack().",
             )
     forces = payload.get("forces", {})
     for spring in forces.get("springs", []):

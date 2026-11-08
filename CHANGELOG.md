@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased - v0.9.8 candidate: gaps from the FreeCAD shorts
+
+- Planar `DynamicsResult.a`: forward dynamics returns the accelerations
+  solved from the same saddle system as the multipliers, for exact power,
+  momentum and Newton-Euler balances (no `np.gradient`). Result payloads
+  include them.
+- Fix: spatial tabulated drives failed at their own domain ends, because the
+  drive-derivative check used a centred difference (`t = -0.006` for a table
+  starting at 0). The check now uses one-sided second-order differences at
+  the table's edges.
+- Add portable planar `gear(body_a, body_b, ratio, carrier=...)` and
+  `rack(pinion, rack, radius, axis=...)` meshes. They are solved constraints;
+  `joint_loads().meshes` reports member and carrier efforts, and the ground
+  share is part of the frame load. A moving carrier gives planetary and
+  differential trains.
+- Add relative theta drives: `motor(..., relative_to=body)` and
+  `coordinate_drive(body, "theta", law=..., relative_to=body)`. The reaction
+  acts on the reference body, not ground, and power uses the relative rate.
+- Emit planar mechanism schema v3 (gear, rack, `relative_to`; v1-v3
+  readable) and joint-loads schema v3 (`meshes`, `relative_to`, three new
+  convention keys).
+- Validation-corpus cases from the shorts: Newton-Euler on the frame, exact
+  power balances with solved accelerations, angular-momentum conservation
+  with an internal motor, frame-torque cancellation by a reverser, an open
+  differential, rack-and-pinion forces, the offset slider-crank closed form,
+  the ground-pin sign convention, and mirrored spatial drive torques.
+- Document sign conventions and load semantics (ground-pin forces, what the
+  frame load contains, mesh torque-only reactions, payload and friction
+  modelling, axial vectors under a mirror, spatial `simulate()` cost and the
+  fully-driven segment-restart recipe).
+
 ## v0.9.7 - One Spatial simulate(), Cardan Joints, and Linear Actuators
 
 - Add `SpatialMechanism.simulate()`: one six-DOF entry point for free,

@@ -170,7 +170,8 @@ def operation_manifest() -> dict[str, Any]:
             _op(
                 "joint_loads",
                 "mechanism.joint_loads(result)",
-                "Named joint reactions, drive efforts (incl. linear actuators) and the frame load.",
+                "Named joint reactions, drive efforts (incl. linear actuators and relative "
+                "drives), gear and rack mesh efforts, and the frame load.",
                 {"result": "DynamicsResult | InverseDynamicsResult"},
                 "JointLoads",
                 ["missing_multipliers"],
@@ -185,7 +186,7 @@ def operation_manifest() -> dict[str, Any]:
             _op(
                 "export_model",
                 "mechanism.to_json(path)",
-                "Write the portable mechanism payload (mbsd.planar.mechanism v2).",
+                "Write the portable mechanism payload (mbsd.planar.mechanism v3).",
                 {"path": "str"},
                 "path",
             ),
@@ -199,7 +200,7 @@ def operation_manifest() -> dict[str, Any]:
             _op(
                 "export_joint_loads",
                 "mechanism.joint_loads_to_json(result, path)",
-                "Write the joint-load history payload (mbsd.planar.joint_loads v2).",
+                "Write the joint-load history payload (mbsd.planar.joint_loads v3).",
                 {"result": "DynamicsResult | InverseDynamicsResult", "path": "str"},
                 "path",
                 ["missing_multipliers"],

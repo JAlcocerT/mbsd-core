@@ -1,7 +1,7 @@
 # MBSD Portable Schemas
 
 These JSON Schemas describe the engine-neutral payloads emitted by MBSD
-`0.9.7`. Runtime readers remain authoritative because they additionally check
+`0.9.8`. Runtime readers remain authoritative because they additionally check
 cross-field physics invariants, identities, and force/reaction balances.
 
 - `mbsd.spatial.model-v4.schema.json`: spatial bodies, frames, and stable joint
@@ -12,10 +12,11 @@ cross-field physics invariants, identities, and force/reaction balances.
   `simulate()`. `constrained-result-v2` stays published.
 - `mbsd.interop.transform-tracks-v1.schema.json`: transform animation handoff
   consumed by the FreeCAD-, Blender-, browser-, and generic reference adapters.
-- `mbsd.planar.joint-loads-v2.schema.json`: named planar joint reactions,
-  drive efforts and power (including distance drives), raw user-constraint
-  reactions, and the frame load over time; the handoff for FEM and
-  drive-sizing workflows. `joint-loads-v1` stays published.
+- `mbsd.planar.joint-loads-v3.schema.json`: named planar joint reactions,
+  drive efforts and power (including distance and relative drives), gear and
+  rack mesh efforts, raw user-constraint reactions, and the frame load over
+  time; the handoff for FEM and drive-sizing workflows. `joint-loads-v1` and
+  `v2` stay published.
 - `mbsd.operations-v1.json`: the operation manifest (not a JSON Schema). It is
   generated from `mbsd.operation_manifest()` and a test keeps them identical.
 
@@ -24,6 +25,14 @@ meanings, removed fields, and new closed-enum values require a new schema
 version. Consumers must reject unsupported versions before interpreting data.
 
 ## Migration notes
+
+Planar-mechanism v3 adds `gear` and `rack` user-constraint kinds (with
+`body_a`, `body`, `carrier` / `axis`, `ratio` / `radius`, `offset`) and an
+optional `relative_to` body index on `motor` and `coordinate_drive` theta
+drives; v2 readers must reject v3. Joint-loads v3 adds the required `meshes`
+block, an optional `relative_to` body on drives, and three convention keys
+(`relative_drive_reaction`, `mesh_effort`, `mesh_reaction`). Every v2
+convention keeps its value.
 
 Spatial-model v4 adds the `parallel_axes` joint kind (`parallel_axis:
 "local_z"`) and portable drive laws in `metadata.drives` /

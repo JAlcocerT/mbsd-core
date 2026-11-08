@@ -67,6 +67,13 @@ class DynamicsResult:
     ``multipliers`` holds the saddle-system Lagrange multipliers sampled at
     every output time (``nrestr x nsteps``); pass the result to
     ``joint_loads`` for physical reactions.
+
+    ``a`` holds the accelerations (``ncoord x nsteps``) solved from the same
+    saddle system as the multipliers at each output sample, so power,
+    momentum and Newton–Euler balances can use them directly instead of
+    differentiating ``v`` numerically. They are the physical constrained
+    accelerations: Baumgarte stabilization terms used during integration are
+    not included.
     """
 
     t: np.ndarray
@@ -74,6 +81,7 @@ class DynamicsResult:
     v: np.ndarray
     provenance: Mapping[str, Any] = field(default_factory=dict)
     multipliers: np.ndarray | None = None
+    a: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -464,14 +472,189 @@ class PlanarMechanism:
         self.model.user_constraints.append(drive)
         return drive
 
+    def gear(
+        self,
+        body_a: int | BodyHandle,
+        body_b: int | BodyHandle,
+        ratio: float,
+        *,
+        carrier: int | BodyHandle = 0,
+        offset: float = 0.0,
+        name: str | None = None,
+    ) -> UserConstraint:
+        """Couple two rotations through an ideal gear mesh (1 row).
+
+        Enforces ``(theta_b - theta_c) = ratio * (theta_a - theta_c) + offset``
+        where ``c`` is the ``carrier`` holding both axles (ground by default;
+        a moving carrier gives planetary and differential trains). ``ratio``
+        is signed: an external spur mesh is ``-N_a / N_b``, an internal (ring)
+        mesh ``+N_a / N_b``, a reverser through idlers ``-1``.
+
+        The mesh carries torque only: ``joint_loads()`` reports the torque on
+        each gear and on the carrier, and the carrier's share is part of the
+        frame load when the carrier is ground. The tangential tooth force is
+        not resolved into the axle pins, so pin reactions exclude it while the
+        frame moment stays complete.
+        """
+        a, b, c = self._idx(body_a), self._idx(body_b), self._idx(carrier)
+        if len({a, b, c}) != 3:
+            raise ValueError("gear needs three different bodies: body_a, body_b and the carrier")
+        ratio = _as_finite_scalar(ratio, "ratio")
+        if ratio == 0.0:
+            raise ValueError("gear ratio must be non-zero")
+        offset = _as_finite_scalar(offset, "offset")
+        coefficients = {3 * b + 2: 1.0, 3 * a + 2: -ratio, 3 * c + 2: ratio - 1.0}
+        return self._add_linear_relation(
+            coefficients,
+            offset,
+            name=self._claim_name(name, "gear"),
+            metadata={
+                "kind": "gear",
+                "body_a": a,
+                "body": b,
+                "carrier": c,
+                "ratio": ratio,
+                "offset": offset,
+            },
+        )
+
+    def rack(
+        self,
+        pinion: int | BodyHandle,
+        rack: int | BodyHandle,
+        radius: float,
+        *,
+        axis: ArrayLike2 = (1.0, 0.0),
+        offset: float = 0.0,
+        name: str | None = None,
+    ) -> UserConstraint:
+        """Couple a pinion rotation to a rack translation (1 row).
+
+        Enforces ``axis . (r_rack - r_ground) = radius * (theta_pinion -
+        theta_ground) + offset`` for a pinion turning on a ground axle and a
+        rack guided along the world ``axis``. ``radius`` is the signed pitch
+        radius: positive when the rack moves along ``+axis`` as the pinion
+        turns counterclockwise (pitch line on the pinion's ``-normal`` side).
+
+        Guide the rack separately (``slider``) and pin the pinion to ground.
+        ``joint_loads()`` reports the pinion torque and the rack's axial
+        force; the ground share is part of the frame load.
+        """
+        p, r = self._idx(pinion), self._idx(rack)
+        if p == r or 0 in {p, r}:
+            raise ValueError("rack needs a moving pinion and a different moving rack body")
+        radius = _as_finite_scalar(radius, "radius")
+        if radius == 0.0:
+            raise ValueError("rack radius must be non-zero")
+        direction = _as_vector(axis, "axis", 2)
+        norm = float(np.linalg.norm(direction))
+        if norm == 0.0:
+            raise ValueError("rack axis must be non-zero")
+        direction = direction / norm
+        offset = _as_finite_scalar(offset, "offset")
+        drive_name = self._claim_name(name, "rack")
+
+        # C = u . (r_rack - r_0) - radius * (theta_p - theta_0) - offset, with the
+        # axis u = A(theta_0) axis carried by ground. Carrying the axis keeps the
+        # row invariant under a rigid rotation of the whole system, so the
+        # mesh's ground share closes the frame moment exactly.
+        def parts(q):
+            u = rot_mat(q[2]) @ direction
+            n = rot_mat_d(q[2]) @ direction
+            return u, n, q[3 * r : 3 * r + 2] - q[0:2]
+
+        def constraint(mb: MBody, q: np.ndarray, t: float) -> np.ndarray:
+            u, _, d = parts(q)
+            return np.array([u @ d - radius * (q[3 * p + 2] - q[2]) - offset])
+
+        def jacobian_fn(mb: MBody, q: np.ndarray, t: float) -> np.ndarray:
+            u, n, d = parts(q)
+            J = np.zeros((1, mb.ncoord))
+            J[0, 3 * r : 3 * r + 2] = u
+            J[0, 0:2] = -u
+            J[0, 3 * p + 2] = -radius
+            J[0, 2] = n @ d + radius
+            return J
+
+        def dt_jacobian_fn(mb: MBody, q: np.ndarray, v: np.ndarray, t: float) -> np.ndarray:
+            u, n, d = parts(q)
+            d_rate = v[3 * r : 3 * r + 2] - v[0:2]
+            J = np.zeros((1, mb.ncoord))
+            J[0, 3 * r : 3 * r + 2] = n * v[2]
+            J[0, 0:2] = -n * v[2]
+            J[0, 2] = n @ d_rate - (u @ d) * v[2]
+            return J
+
+        mesh = UserConstraint(
+            constraint,
+            jacobian_fn,
+            dt_jacobian_fn,
+            lambda mb, q, t: np.zeros(1),
+            lambda mb, q, v, t: np.zeros(1),
+            count=1,
+            name=drive_name,
+        )
+        mesh.metadata = {
+            "kind": "rack",
+            "name": drive_name,
+            "body_a": p,
+            "body": r,
+            "radius": radius,
+            "axis": direction.tolist(),
+            "offset": offset,
+            "portable": True,
+        }
+        self.model.user_constraints.append(mesh)
+        return mesh
+
+    def _add_linear_relation(
+        self,
+        coefficients: Mapping[int, float],
+        offset: float,
+        *,
+        name: str,
+        metadata: dict[str, Any],
+    ) -> UserConstraint:
+        """Add ``sum(c_k * q_k) - offset = 0`` as a named, portable constraint row."""
+        columns = tuple(coefficients.items())
+
+        def row(mb: MBody) -> np.ndarray:
+            J = np.zeros((1, mb.ncoord))
+            for col, coefficient in columns:
+                J[0, col] += coefficient
+            return J
+
+        def constraint(mb: MBody, q: np.ndarray, t: float) -> np.ndarray:
+            return np.array([sum(c * q[col] for col, c in columns) - offset])
+
+        relation = UserConstraint(
+            constraint,
+            lambda mb, q, t: row(mb),
+            lambda mb, q, v, t: np.zeros((1, mb.ncoord)),
+            lambda mb, q, t: np.zeros(1),
+            lambda mb, q, v, t: np.zeros(1),
+            count=1,
+            name=name,
+        )
+        relation.metadata = {**metadata, "name": name, "portable": True}
+        self.model.user_constraints.append(relation)
+        return relation
+
     def motor(
         self,
         body: int | BodyHandle,
         omega: float,
         phase: float = 0.0,
         name: str | None = None,
+        *,
+        relative_to: int | BodyHandle | None = None,
     ) -> UserConstraint:
-        """Drive a body's absolute angle as ``theta = phase + omega * t``."""
+        """Drive a body's angle as ``theta = phase + omega * t``.
+
+        With ``relative_to`` the drive prescribes the angle relative to that
+        body (``theta - theta_ref``), so its reaction torque acts on the
+        reference body instead of ground: a motor mounted on a moving part.
+        """
         idx = self._idx(body)
         omega = _as_finite_scalar(omega, "omega")
         phase = _as_finite_scalar(phase, "phase")
@@ -481,7 +664,20 @@ class PlanarMechanism:
             ConstantSpeed(rate=omega, start=phase),
             name=self._claim_name(name, "motor"),
             metadata={"kind": "motor", "omega": omega, "phase": phase},
+            relative_to=self._relative_reference(idx, relative_to, "theta"),
         )
+
+    def _relative_reference(
+        self, body_idx: int, relative_to: int | BodyHandle | None, coordinate: str
+    ) -> int | None:
+        if relative_to is None:
+            return None
+        reference = self._idx(relative_to)
+        if reference == body_idx:
+            raise ValueError("relative_to must be a different body")
+        if coordinate != "theta":
+            raise ValueError("relative_to is supported for theta drives only")
+        return None if reference == 0 else reference
 
     def coordinate_drive(
         self,
@@ -493,6 +689,7 @@ class PlanarMechanism:
         *,
         law: MotionLaw | None = None,
         name: str | None = None,
+        relative_to: int | BodyHandle | None = None,
     ) -> UserConstraint:
         """Drive one body coordinate with a motion law or scalar time functions.
 
@@ -500,11 +697,15 @@ class PlanarMechanism:
         ``Tabulated``) or the three callables ``value``, ``velocity`` and
         ``acceleration``. Callables work in Python but make the model
         non-portable: exports mark them opaque and importers reject them.
+
+        ``relative_to`` (theta only) prescribes ``theta - theta_ref`` so the
+        drive reacts on that body instead of ground.
         """
         offsets = {"x": 0, "y": 1, "theta": 2}
         if coordinate not in offsets:
             raise ValueError("coordinate must be one of: x, y, theta")
         idx = self._idx(body)
+        reference = self._relative_reference(idx, relative_to, coordinate)
         if law is not None:
             if not isinstance(law, MotionLaw):
                 raise TypeError("law must be a MotionLaw such as ConstantSpeed or Tabulated")
@@ -516,6 +717,7 @@ class PlanarMechanism:
                 law,
                 name=self._claim_name(name, "drive"),
                 metadata={"kind": "coordinate_drive"},
+                relative_to=reference,
             )
         for fn_name, fn in {
             "value": value,
@@ -535,6 +737,7 @@ class PlanarMechanism:
                 "velocity": getattr(velocity, "__name__", "callable"),
                 "acceleration": getattr(acceleration, "__name__", "callable"),
             },
+            relative_to=reference,
         )
 
     def _add_drive(
@@ -545,17 +748,22 @@ class PlanarMechanism:
         *,
         name: str,
         metadata: dict[str, Any],
+        relative_to: int | None = None,
     ) -> UserConstraint:
         col = 3 * body_idx + {"x": 0, "y": 1, "theta": 2}[coordinate]
+        ref_col = None if relative_to is None else 3 * relative_to + 2
         value, velocity, acceleration = law.value, law.velocity, law.acceleration
         portable = isinstance(law, MotionLaw)
 
         def constraint(mb: MBody, q: np.ndarray, t: float) -> np.ndarray:
-            return np.array([q[col] - value(t)])
+            reference = 0.0 if ref_col is None else q[ref_col]
+            return np.array([q[col] - reference - value(t)])
 
         def jacobian(mb: MBody, q: np.ndarray, t: float) -> np.ndarray:
             J = np.zeros((1, mb.ncoord))
             J[0, col] = 1.0
+            if ref_col is not None:
+                J[0, ref_col] = -1.0
             return J
 
         def dt_jacobian(mb: MBody, q: np.ndarray, v: np.ndarray, t: float) -> np.ndarray:
@@ -583,6 +791,8 @@ class PlanarMechanism:
             "coordinate": coordinate,
             "portable": portable,
         }
+        if relative_to is not None:
+            drive.metadata["relative_to"] = relative_to
         if portable:
             drive.metadata["law"] = law.to_dict()
         drive.law = law
@@ -1118,7 +1328,7 @@ class PlanarMechanism:
                 remediation="Check initial conditions, tolerances, or try method='Radau'.",
             )
         q, v, t_out = extract_dynamics_solution(self.model, sol)
-        multipliers = self._sampled_multipliers(
+        accelerations, multipliers = self._sampled_saddle_solution(
             t_out,
             q,
             v,
@@ -1150,21 +1360,26 @@ class PlanarMechanism:
             "call_Q_user_fn": call_Q_user_fn is not None,
         }
         return DynamicsResult(
-            t=t_out, q=q, v=v, provenance=provenance, multipliers=multipliers
+            t=t_out,
+            q=q,
+            v=v,
+            provenance=provenance,
+            multipliers=multipliers,
+            a=accelerations,
         )
 
-    def _sampled_multipliers(self, t, q, v, springs, Q_user_fn, extra):
-        """Re-solve the saddle system at each sample to recover multipliers."""
+    def _sampled_saddle_solution(self, t, q, v, springs, Q_user_fn, extra):
+        """Re-solve the saddle system at each sample for accelerations and multipliers."""
+        accelerations = np.zeros((self.model.ncoord, len(t)))
         multipliers = np.zeros((self.model.nrestr, len(t)))
-        if self.model.nrestr == 0:
-            return multipliers
         for step, ti in enumerate(t):
             qk, vk = q[:, step], v[:, step]
             Q_user = Q_user_fn(ti, qk, vk) if Q_user_fn is not None else None
             Q_total, M = assemble_system(self.model, qk, vk, ti, springs, Q_user, **extra)
-            _, lam = solve_acceleration_with_lagrange(self.model, qk, vk, ti, M, Q_total)
+            a, lam = solve_acceleration_with_lagrange(self.model, qk, vk, ti, M, Q_total)
+            accelerations[:, step] = a
             multipliers[:, step] = lam
-        return multipliers
+        return accelerations, multipliers
 
     def inverse_dynamics(
         self,
@@ -1335,14 +1550,14 @@ class PlanarMechanism:
         for drive in self.model.user_constraints:
             metadata = drive.metadata or {}
             label = drive.name or metadata.get("kind", "user_constraint")
-            if metadata.get("kind") not in {"motor", "coordinate_drive", "distance_drive"}:
+            if metadata.get("kind") not in {"motor", "coordinate_drive", "distance_drive", "gear", "rack"}:
                 issues.append(
                     Issue(
                         "opaque_constraint",
                         "warning",
                         f"User constraint {label!r} is raw Python and is not portable.",
-                        "Use pin, slider, point_on_line, motor, coordinate_drive(law=...) "
-                        "or distance_drive(law=...).",
+                        "Use pin, slider, point_on_line, gear, rack, motor, "
+                        "coordinate_drive(law=...) or distance_drive(law=...).",
                     )
                 )
             elif not metadata.get("portable", False):
@@ -1628,9 +1843,10 @@ def planar_capabilities() -> dict[str, Any]:
         "dimension": 2,
         "status": "stable_candidate",
         "coordinates": ["x", "y", "theta"],
-        "joints": ["pin", "slider", "point_on_line"],
+        "joints": ["pin", "slider", "point_on_line", "gear", "rack"],
         "drives": {
             "kinds": ["motor", "coordinate_drive", "distance_drive"],
+            "relative_theta_drives": True,
             "portable_laws": ["constant_speed", "polynomial", "tabulated"],
             "callables": "non_portable",
         },

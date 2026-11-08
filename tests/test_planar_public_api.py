@@ -809,7 +809,7 @@ def test_planar_mechanism_and_result_exports_are_json_ready(tmp_path):
         "forces",
     } <= mechanism_payload.keys()
     assert mechanism_payload["schema"] == "mbsd.planar.mechanism"
-    assert mechanism_payload["schema_version"] == 2
+    assert mechanism_payload["schema_version"] == 3
     assert mechanism_payload["units"]["length"] == "m"
     assert mechanism_payload["units"]["angle"] == "rad"
     assert mechanism_payload["conventions"]["rotation"] == "counterclockwise_positive"
@@ -849,7 +849,7 @@ def test_planar_mechanism_and_result_exports_are_json_ready(tmp_path):
     )
     trajectory_csv = mechanism.result_to_csv(result, tmp_path / "trajectory.csv")
 
-    assert json.loads(mechanism_json.read_text(encoding="utf-8"))["schema_version"] == 2
+    assert json.loads(mechanism_json.read_text(encoding="utf-8"))["schema_version"] == 3
     assert json.loads(result_json.read_text(encoding="utf-8"))["coordinates"]["a"]
     with trajectory_csv.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))

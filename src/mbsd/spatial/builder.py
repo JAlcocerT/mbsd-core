@@ -126,7 +126,7 @@ class SpatialCoordinateDrive:
         t = _finite_scalar(t, "t")
         analytic = _finite_scalar(self.velocity(t), "drive velocity")
         numeric, uncertainty, converged = _adaptive_derivative(
-            self.value, t, "drive value"
+            self.value, t, "drive value", getattr(self.law, "domain", None)
         )
         tolerance = DRIVE_DERIVATIVE_ATOL + DRIVE_DERIVATIVE_RTOL * max(
             abs(numeric), abs(analytic)
@@ -146,12 +146,12 @@ class SpatialCoordinateDrive:
         t = _finite_scalar(t, "t")
         if self.acceleration is None:
             estimate, _, _ = _adaptive_derivative(
-                self.velocity, t, "drive velocity"
+                self.velocity, t, "drive velocity", getattr(self.law, "domain", None)
             )
             return estimate
         analytic = _finite_scalar(self.acceleration(t), "drive acceleration")
         numeric, uncertainty, converged = _adaptive_derivative(
-            self.velocity, t, "drive velocity"
+            self.velocity, t, "drive velocity", getattr(self.law, "domain", None)
         )
         tolerance = DRIVE_DERIVATIVE_ATOL + DRIVE_DERIVATIVE_RTOL * max(
             abs(numeric), abs(analytic)
@@ -1974,35 +1974,61 @@ def _finite_scalar(value: float, name: str) -> float:
 
 
 def _adaptive_derivative(
-    function: Callable[[float], float], t: float, value_name: str
+    function: Callable[[float], float],
+    t: float,
+    value_name: str,
+    domain: tuple[float, float] | None = None,
 ) -> tuple[float, float, bool]:
     """Estimate a first derivative without tying the step to absolute time.
 
     Central differences are refined and Richardson-extrapolated.  The lower
     step bound follows floating-point spacing at ``t``; the nominal step uses
     the cube root of machine epsilon, appropriate for a first derivative.
+
+    When ``domain`` is given (a tabulated law), the stencil never leaves it:
+    near the lower end a second-order forward difference is used, near the
+    upper end a backward one, so a law can be checked at its own end points.
     """
+    lo, hi = (-np.inf, np.inf) if domain is None else (float(domain[0]), float(domain[1]))
     spacing = abs(float(np.spacing(t)))
     base = max(float(np.cbrt(np.finfo(float).eps)), 16.0 * spacing)
     # Start wide enough to survive representable-time quantization at large
     # absolute times, then refine far enough for high-frequency laws.
     steps = [base * (2.0**power) for power in range(10, -4, -1)]
     estimates: list[tuple[float, float]] = []
+    # One stencil for every step, so the Richardson error model stays valid.
+    widest = steps[0]
+    if t - widest >= lo and t + widest <= hi:
+        stencil = "central"
+    elif t - lo <= hi - t:
+        stencil = "forward"
+    else:
+        stencil = "backward"
+    centre = None if stencil == "central" else _finite_scalar(function(t), value_name)
     for step in steps:
         if t + step == t or t - step == t:
             continue
-        forward_time = t + step
-        backward_time = t - step
-        forward = _finite_scalar(function(forward_time), value_name)
-        backward = _finite_scalar(function(backward_time), value_name)
-        actual_span = forward_time - backward_time
-        derivative = (forward - backward) / actual_span
-        roundoff = (
-            8.0
-            * np.finfo(float).eps
-            * max(1.0, abs(forward), abs(backward))
-            / actual_span
-        )
+        if stencil == "central":
+            forward_time = t + step
+            backward_time = t - step
+            if backward_time < lo or forward_time > hi:
+                continue
+            forward = _finite_scalar(function(forward_time), value_name)
+            backward = _finite_scalar(function(backward_time), value_name)
+            actual_span = forward_time - backward_time
+            derivative = (forward - backward) / actual_span
+            magnitude = max(1.0, abs(forward), abs(backward))
+        else:
+            sign = 1.0 if stencil == "forward" else -1.0
+            near_time, far_time = t + sign * step, t + sign * 2.0 * step
+            if not (lo <= near_time <= hi and lo <= far_time <= hi):
+                continue
+            near = _finite_scalar(function(near_time), value_name)
+            far = _finite_scalar(function(far_time), value_name)
+            actual_span = abs(far_time - t)
+            derivative = sign * (-3.0 * centre + 4.0 * near - far) / actual_span
+            magnitude = max(1.0, abs(centre), abs(near), abs(far))
+        roundoff = 8.0 * np.finfo(float).eps * magnitude / actual_span
         estimates.append((derivative, roundoff))
     if len(estimates) < 2:
         raise ValueError(f"numerical derivative check for {value_name} is inconclusive")

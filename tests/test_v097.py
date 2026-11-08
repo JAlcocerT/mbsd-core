@@ -432,7 +432,7 @@ def test_point_on_line_reaction_is_normal_and_round_trips():
     # The rocker tip lifts the valve against its 50 N preload and weight.
     assert np.all(tip["force_on_j"][1] > 50.0)
     payload = m.to_dict()
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] >= 2
     assert payload["joints"]["point_on_line"][0]["name"] == "tip"
     replay = PlanarMechanism.from_dict(json.loads(json.dumps(payload))).inverse_dynamics(t, q0=q0)
     assert np.array_equal(replay.multipliers, result.multipliers)
@@ -473,7 +473,7 @@ def test_distance_drive_is_portable_and_reports_actuator_force():
     replay = PlanarMechanism.from_json(m.to_json(_tmp_json()))
     assert np.array_equal(replay.inverse_dynamics(t, q0=q0).multipliers, result.multipliers)
     payload = m.joint_loads_to_dict(result)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] >= 2
     assert payload["drives"][0]["coordinate"] == "distance"
 
 

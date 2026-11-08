@@ -5,8 +5,8 @@
   "examples_core_range": ">=0.9.7,<0.10",
   "schemas": {
     "mbsd.planar.mechanism": {
-      "emitted": 2,
-      "readable": [1, 2],
+      "emitted": 3,
+      "readable": [1, 2, 3],
       "validation": "structural_and_portability",
       "importable": true
     },
@@ -17,7 +17,7 @@
       "emitted": 1
     },
     "mbsd.planar.joint_loads": {
-      "emitted": 2,
+      "emitted": 3,
       "validation": "json_schema"
     },
     "mbsd.operations": {
